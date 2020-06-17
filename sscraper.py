@@ -872,10 +872,17 @@ def md5(fname):
 def sha1(fname):
     dbval = lookupHashInDB(fname,'SHA1')
     if dbval !='' and dbval != None:
+        logging.debug ('###### RETURNING VALUE FOUND IN DB')
         return dbval
     logging.debug ('###### NOT IN DB SO CALCULATING SHA1 OF FILE '+fname)
     try:
-        BLOCKSIZE = 65536
+        logging.debug ('###### FILE SIZE '+str(os.stat(fname).st_size))
+        if os.stat(fname).st_size > 70000:
+            logging.debug ('###### BIG FILE SIZE '+str(os.stat(fname).st_size))
+            BLOCKSIZE = 65536
+        else:
+            logging.debug ('###### SMALL FILE SIZE '+str(os.stat(fname).st_size))
+            BLOCKSIZE = 1
         hasher = hashlib.sha1()
         with open(fname, 'rb') as afile:
             buf = afile.read(BLOCKSIZE)
@@ -1636,21 +1643,73 @@ def gameNameMatches(orig,chk):
         if str(chkname) == str(orig):
             logging.info ('###### NAME MATCHES')
             return True
-        orig = orig.replace('&','AND')
-        orig = orig.replace(' XII',' 12')
-        orig = orig.replace(' XI',' 11')
-        orig = orig.replace(' X',' 10')
-        orig = orig.replace(' IX',' 9')
-        orig = orig.replace(' VIII',' 8')
-        orig = orig.replace(' VII',' 7')
-        orig = orig.replace(' VI',' 6')
-        orig = orig.replace(' IV',' 4')
-        orig = orig.replace(' V',' 5')
-        orig = orig.replace(' III',' 3')
-        orig = orig.replace(' II',' 2')
-        orig = orig.replace(' I',' 1')
-        orig = orig.replace(' S ','\'S')
-        logging.info ('###### COMPARING ['+orig+'] WITH ['+chkname+']')
+        sorig = orig.replace('&','AND')
+        logging.info ('###### COMPARING ['+sorig+'] WITH ['+chkname+']')
+        if str(chkname) == str(sorig):
+            logging.info ('###### NAME MATCHES')
+            return True
+        sorig = orig.replace(' XII',' 12')
+        logging.info ('###### COMPARING ['+sorig+'] WITH ['+chkname+']')
+        if str(chkname) == str(sorig):
+            logging.info ('###### NAME MATCHES')
+            return True
+        sorig = orig.replace(' XI',' 11')
+        logging.info ('###### COMPARING ['+sorig+'] WITH ['+chkname+']')
+        if str(chkname) == str(sorig):
+            logging.info ('###### NAME MATCHES')
+            return True
+        sorig = orig.replace(' X',' 10')
+        logging.info ('###### COMPARING ['+sorig+'] WITH ['+chkname+']')
+        if str(chkname) == str(sorig):
+            logging.info ('###### NAME MATCHES')
+            return True
+        sorig = orig.replace(' IX',' 9')
+        logging.info ('###### COMPARING ['+sorig+'] WITH ['+chkname+']')
+        if str(chkname) == str(sorig):
+            logging.info ('###### NAME MATCHES')
+            return True
+        sorig = orig.replace(' VIII',' 8')
+        logging.info ('###### COMPARING ['+sorig+'] WITH ['+chkname+']')
+        if str(chkname) == str(sorig):
+            logging.info ('###### NAME MATCHES')
+            return True
+        sorig = orig.replace(' VII',' 7')
+        logging.info ('###### COMPARING ['+sorig+'] WITH ['+chkname+']')
+        if str(chkname) == str(sorig):
+            logging.info ('###### NAME MATCHES')
+            return True
+        sorig = orig.replace(' VI',' 6')
+        logging.info ('###### COMPARING ['+sorig+'] WITH ['+chkname+']')
+        if str(chkname) == str(sorig):
+            logging.info ('###### NAME MATCHES')
+            return True
+        sorig = orig.replace(' IV',' 4')
+        logging.info ('###### COMPARING ['+sorig+'] WITH ['+chkname+']')
+        if str(chkname) == str(sorig):
+            logging.info ('###### NAME MATCHES')
+            return True
+        sorig = orig.replace(' V',' 5')
+        logging.info ('###### COMPARING ['+sorig+'] WITH ['+chkname+']')
+        if str(chkname) == str(sorig):
+            logging.info ('###### NAME MATCHES')
+            return True
+        sorig = orig.replace(' III',' 3')
+        logging.info ('###### COMPARING ['+sorig+'] WITH ['+chkname+']')
+        if str(chkname) == str(sorig):
+            logging.info ('###### NAME MATCHES')
+            return True
+        sorig = orig.replace(' II',' 2')
+        logging.info ('###### COMPARING ['+sorig+'] WITH ['+chkname+']')
+        if str(chkname) == str(sorig):
+            logging.info ('###### NAME MATCHES')
+            return True
+        sorig = orig.replace(' I',' 1')
+        logging.info ('###### COMPARING ['+sorig+'] WITH ['+chkname+']')
+        if str(chkname) == str(sorig):
+            logging.info ('###### NAME MATCHES')
+            return True
+        sorig = orig.replace(' S ','\'S ')
+        logging.info ('###### COMPARING ['+sorig+'] WITH ['+chkname+']')
         if str(chkname) == str(orig):
             logging.info ('###### NAME MATCHES')
             return True
@@ -1705,7 +1764,7 @@ def deleteFile (file):
 def findMissing():
     ### GET ALL SYSTEMS, THIS IS DONE TO HAVE A LIST OF ARCADE RELATED SYSTEMS
     systems = getAllSystems(CURRSSID)
-    arcadeSystems = [75]
+    arcadeSystems = [75,142]
     '''
     for system in systems:
         if 'ARCADE' in system['type'].upper():
@@ -1721,6 +1780,7 @@ def findMissing():
             ### clean previous done
             ### CHECK IF THERE IS A SEVENTH COLUMN, WHICH WOULD BE THE GAMEID TO INSERT
             newmode = False
+            newGameId = 0
             try:
                 logging.info ('###### LOOKING IF THERE IS SOMETHING TO DO')
                 whattodo = str(row[6]).upper()
@@ -1763,12 +1823,13 @@ def findMissing():
                 newline = row[0]+','+row[1]+','+row[2]+','+row[3]+','+row[4]+','+row[5]+',FORCED_ID'
                 system=row[0]
                 logging.info ('###### DOING RESEARCH FOR '+row[1]+' IN SYSTEM '+str(system))
-                if str(system) != '75':
+                if str(system) != '75' and str(system) != '142':
                     searchSystems=[system]
                     filename=(row[1][row[1].rfind('/')+1:row[1].rfind('.')]).replace('_',' ')
                     ### GBA Exception
                     if str(system) == '12':
                         filename = filename[7:]
+                    ### REPLACING BACK THE ' THAT MIGHT HAVE BEEN REMOVED
                 else:
                     filename=row[1][row[1].rfind('/')+1:row[1].rfind('.')]
                     filename = getArcadeName(filename)
@@ -1776,11 +1837,13 @@ def findMissing():
                     searchSystems = arcadeSystems
                 logging.info ('###### WILL SEARCH IN '+str(searchSystems))
                 subOne = (re.sub('[V|v]+\d+.\d+','',filename)).strip()
-                subTwo = (subOne.rstrip('0123456789')).strip()
-                subThree = (re.sub(r'\[[^)]*\]','',subTwo)).strip()
+                ##subTwo = (subOne.rstrip('0123456789')).strip()
+                subThree = (re.sub(r'\[[^)]*\]','',subOne)).strip()
                 myGameName = (re.sub(r'\([^)]*\)','',subThree)).strip()
                 myGameName = myGameName.replace('   ',' ')
                 myGameName = myGameName.replace('  ',' ')
+                myGameName = myGameName.replace(' S ','\'S ')
+                myGameName = myGameName.replace(' s ','\'s ')
                 if myGameName !='':
                     sha = row[2]
                     myParams = None

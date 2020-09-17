@@ -130,8 +130,11 @@ class Game:
         self.path = zippedFile
         self.name = json['jeu']['nom']
         mdisk = multiDisk(self.path)
+        mvers = multiVersion(self.path)
         if mdisk:
             self.name = self.name+' '+mdisk.group(0)
+        if mvers:
+            self.name = self.name +' ('+mvers.group(0)+')'
         self.desc = getDesc(json)
         self.image = getMedia(json['jeu']['medias'],
                               json['abspath'],
@@ -244,7 +247,7 @@ def writeMissing(sysid,file):
     logging.debug ('###### ADDING FILE TO MISSING FILE')
     try:
         f=open(missingfile, "a+")
-        f.write(str(sysid)+','+str(file)+','+str(sha1(file))+','+str(md5(file))+','+str(crc(file))+','+str(os.stat(file).st_size/1024)+'\n')
+        f.write(str(sysid)+'|'+str(file)+'|'+str(sha1(file))+'|'+str(md5(file))+'|'+str(crc(file))+'|'+str(os.stat(file).st_size/1024)+'\n')
         f.close()
     except Exception as e:
         logging.error ('###### COULD NOT WRITE TO MISSING FILE '+str(e))
@@ -457,7 +460,7 @@ def waitNewDay(runTime):
         params = None
         params =dict(fixParams)
         params['gameid'] = 1
-        response = callApi(fixedURL,API,params,0,anon,'','WAIT NEW DAY')
+        response = callAPI(fixedURL,API,params,0,anon,'','WAIT NEW DAY')
         anon = not anon
         if 'ssuser'  in response:
             allowed = True
@@ -584,18 +587,26 @@ def grabVideo (URL,destfile,tout):
 def validateImage(imagefile):
     try:
         if os.path.islink(imagefile):
+            logging.debug ('###### IT IS A SYMLONK SO ASSUMING IMAGE IS OK')
             return True
         im=Image.open(imagefile)
+        logging.debug ('###### IMAGE SEEMS TO BE OK')
         return True
-    except IOError:
+    except Exception as e:
+        logging.debug ('###### IMAGE IS CORRUPT '+str(e))
         return False
 
 def validateVideo(videofile):
-    fileInfo = MediaInfo.parse(videofile)
+    if os.path.islink(videofile):
+        logging.debug ('###### IS A SYMLINK, SO ASSUME IT IS OK')
+        return True
     try:
+        fileInfo = MediaInfo.parse(videofile)
         for track in fileInfo.tracks:
             if track.track_type == "Video":
+                logging.debug ('###### IT IS A PROPER VIDEO')
                 return True
+        logging.debug('###### COULD NOT FIND ANY VIDEO TRACKS IN THE FILE')
         return False
     except Exception as e:
         logging.error ('##### COULD NOT VALIDATE VIDEO '+str(e))
@@ -609,12 +620,15 @@ def grabMedia(URL,destfile,tout):
             result = subprocess.call(['wget','--retry-connrefused','--waitretry=1','--read-timeout=20','--timeout=15','-t','0','-c','-q', URL, '-O', destfile])
             if not validateImage(destfile):
                 if os.path.isfile(destfile):
+                    logging.debug('###### COULD NOT VALIDATE '+destfile+' SO I REMOVE IT')
                     os.remove(destfile)
                 if 'clone.' in URL:
+                    logging.debug('###### .CLONE IS NOT WORKING LET\'S TRY WWW.')
                     URL = URL.replace ('clone.','www.')
                 else:
+                    logging.debug('###### .WWW IS NOT WORKING, LET\'S TRY CLONE.')
                     URL = URL.replace ('www.','clone.')
-                logging.error ('###### DOWNLOAD IS CORRUPTED')
+                logging.error ('###### DOWNLOAD IS CORRUPTED ON RETRY '+str(retries+1)+' URL '+str(URL))
                 result = -1
             retries = retries + 1
         logging.debug ('###### RESULT OF DOWNLOAD '+str(result))
@@ -912,10 +926,10 @@ def lookupHashInDB(file,hashType):
 def updateHashInDB(file,hashType,hash):
     logging.debug ('###### UPDATING '+hashType+' '+hash+' FOR FILE '+file)
     mycursor = mydb.cursor()
-    sql = "UPDATE filehashes SET "+hashType.upper()+"= %s WHERE file = \"%s\""
-    val =[(str(hash),str(file))]
+    sql = "UPDATE filehashes SET "+hashType.upper()+"= %s WHERE file = %s"
+    val =(str(hash),str(file))
     try:
-        mycursor.executemany(sql, val)
+        mycursor.execute(sql, val)
         mydb.commit()
         logging.debug ('###### UPDATED '+hashType+' '+hash+' FOR FILE '+file)
     except Exception as e:
@@ -926,7 +940,7 @@ def insertHashInDB(file,hashType,hash):
     logging.debug ('###### INSERTING '+hashType+' '+hash+' FOR FILE '+file)
     mycursor = mydb.cursor()
     sql = "INSERT INTO filehashes (file, "+hashType.upper()+") VALUES (%s, %s)"
-    val =[(str(file),str(hash))]
+    val =(str(file),str(hash))
     try:
         mycursor.executemany(sql, val)
         mydb.commit()
@@ -1862,7 +1876,7 @@ def findMissing():
     ### read missing file and try to get game by name
     matchPercent = 95
     with open(missing) as csv_file:
-        csv_reader = csv.reader(csv_file, delimiter=',')
+        csv_reader = csv.reader(csv_file, delimiter='|')
         line_count = 0
         newGameId = 0
         for row in csv_reader:
@@ -2000,8 +2014,8 @@ def findMissing():
                                         keepon = False
                                     else:
                                         for gameName in game['noms']:
-                                            newline = newline + ',' + gameName['text']
-                                        newline = newline + ',' + thisGameID
+                                            newline = newline + '|' + gameName['text']
+                                        newline = newline + '|' + thisGameID
                         ansretries = ansretries - 1
                         if ansretries == 0 and len(searchSystems)>1:
                             ansretries = oriretries
@@ -2071,9 +2085,15 @@ def cleanGameList(path):
 
 
 def multiDisk(filename):
-    checkreg ='\([D|d][I|i][S|s][K\k].*\)|\([S|s][I|i][D|d][E|e].*\)|\([D|d][I|i][S|s][C|c].*\)|\([T|t][A|a][P|p][E|e].*\)|\([F|f][I|i][L|l][E|e].*\)'
+    checkreg = '\([D|d][I|i][S|s][K\k].*\)|\([S|s][I|i][D|d][E|e].*\)|\([D|d][I|i][S|s][C|c].*\)|\([T|t][A|a][P|p][E|e].*\)|\([F|f][I|i][L|l][E|e].*\)'
     matchs = re.search(checkreg,filename)
     return matchs
+
+def multiVersion(filename):
+    checkreg = '[V|v]\d*\.\w*'
+    matchs = re.search(checkreg,filename)
+    return matchs
+
 
 def cleanSys(system):
     ### Get all systems from XML
@@ -2115,13 +2135,16 @@ def updateFile(path,localSHA,localCRC,localMD):
         print 'SKIPPING '+localSHA
         return
     else:
-        checkreg ='\([D|d][I|i][S|s][K\k].*\)|\([S|s][I|i][D|d][E|e].*\)|\([D|d][I|i][S|s][C|c].*\)|\([T|t][A|a][P|p][E|e].*\)|\([F|f][I|i][L|l][E|e].*\)'
         matchs = multiDisk(path)
+        vmatchs = multiVersion(path)
         if matchs:
-            destFile = (filepath+thisGame['jeu']['nom']+' '+matchs.group(0).replace('_',' ')+filext).encode('ascii', 'ignore')
-            print destFile
+            destFile = filepath+thisGame['jeu']['nom']+' '+matchs.group(0).replace('_',' ')
         else:
-            destFile = (filepath+thisGame['jeu']['nom']+filext).encode('ascii', 'ignore')
+            destFile = filepath+thisGame['jeu']['nom']
+        if vmatchs:
+            destFile = (destfile+' ('+vmatchs.group(0).replace('_',' ')+')'+filext).encode('ascii', 'ignore')
+        else
+            destfile = (destfile.+filext).encode('ascii', 'ignore')
         if destFile != path:
             res = updateDBFile(path,destFile)
             if res == 0:

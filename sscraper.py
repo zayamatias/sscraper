@@ -30,6 +30,7 @@ from time import sleep
 from pymediainfo import MediaInfo
 import argparse
 import re
+import cookielib
 
 ### Parse arguments first
 
@@ -37,17 +38,25 @@ parser = argparse.ArgumentParser(description='ROM scraper, get information of yo
 parser.add_argument('--missing', help='Try to find missing ganes from the missing file',nargs=1)
 parser.add_argument('--update', help='Update local DB information from screenscraper',const='True',nargs='?')
 parser.add_argument('--clean', help='Clean a system from the DB, deletes all records from files',nargs=1)
+parser.add_argument('--rename', help='Rename files to match the actual game name in the DB',nargs='?')
 args = vars(parser.parse_args())
 
 try:
     missing = args['missing'][0]
 except:
     missing = ''
+
 try:
     update = args['update']
     if update == None : update = False
 except:
     update = False
+
+try:
+    dbRename = args['rename']
+    if dbRename == None : dbRename = False
+except:
+    dbRename = False
 
 try:
     cleanSystem = args['clean'][0]
@@ -87,7 +96,7 @@ CURRSSID = 0
 lastfile = ''
 lastresult = ''
 ### INSERT THE EXTENSIONS YOU DO NOT WANT TO HAVE ZIPPED IN THE LIST BELOW
-donotcompress = ['.zip','.lha','.iso','.cue','.bin','.chd','.pbp','.rp','.sh','.mgw']
+donotcompress = ['.zip','.lha','.iso','.cue','.bin','.chd','.pbp','.rp','.sh','.mgw','.rvz']
 ### OUTPUT FILE WITH THE MISSING FILES CREATED IN THE FIRST ROUND
 missingfile='/home/pi/missing.csv'
 ### OUTPUT FILE WITH THE MISSING FILES CREATED IN THE SECOND ROUNF (WHEN --missing PARAMETER IS PASSED)
@@ -95,6 +104,14 @@ newmissingfile='/home/pi/newmissing.csv'
 
 BIOSDIR = '/home/pi/RetroPie/BIOS/MAME'
 UNKDIR = '/home/pi/RetroPie/UNKNOWN'
+cookies = cookielib.LWPCookieJar()
+handlers = [
+    urllib2.HTTPHandler(),
+    urllib2.HTTPSHandler(),
+    urllib2.HTTPCookieProcessor(cookies)
+    ]
+opener = urllib2.build_opener(*handlers)
+
 
 class Game:
     ### THIS IS THE GAME CLASS, IT WILL HOLD INFORMATION OF EACH SCRAPED GAME
@@ -112,6 +129,9 @@ class Game:
             zippedFile = file
         self.path = zippedFile
         self.name = json['jeu']['nom']
+        mdisk = multiDisk(self.path)
+        if mdisk:
+            self.name = self.name+' '+mdisk.group(0)
         self.desc = getDesc(json)
         self.image = getMedia(json['jeu']['medias'],
                               json['abspath'],
@@ -153,6 +173,15 @@ class Game:
             return gameNode
         else:
             return None
+def callAPIURL(URL):
+    #req = urllib2.Request('https://www.screenscraper.fr')
+    #res = opener.open(req)
+    #cookiestring = ''
+    #for cookie in cookies:
+     #   cookiestring  = cookiestring + cookie.name+'='+cookie.value
+    request = urllib2.Request(URL)
+    response = urllib2.urlopen(request,timeout=20).read()
+    return response
 
 def isMissing(json,file):
     ### THIS FUNCTION WILL CHECK IF WE CAN CONSIDER FILE AS MISSING FROM THE SCRAPER SITE
@@ -176,6 +205,8 @@ def isMissing(json,file):
 
 def cleanMedia (directory,extension):
     ### THIS FUNCTION WILL GO INTO A DIRECTORY AND MATCH FILES WITH THE PASSED EXTENSION
+    cands = []
+    filemap=dict()
     if os.path.exists(directory):
         os.chdir(directory)
         ### LOOKUP ALL FILES WITH EXTENSION
@@ -184,31 +215,29 @@ def cleanMedia (directory,extension):
         for file in files:
             ### DISCARD SYMBOLIC LINKS
             if not os.path.islink(file):
-                ### IT IS A REGULAR FILE
-                ### GET ALL FILES AGAIN
-                cfiles = glob.glob(extension)
-                ### ITERATE THROUGH FILES
-                for cfile in cfiles:
-                    ### IS IT A SYMLINK?
-                    if not os.path.islink(cfile):
-                        ### NO IT IS NOT, IS IT THE SAME FILE?
-                        if cfile != file:
-                            ### NO IT IS NOT, SO DOES IT HAVE THE SAME SIZE?
-                            if os.stat(cfile).st_size == os.stat(file).st_size:
-                                ### YES IT DOES, BUT DOES IT HAVE THE SAME SHA?
-                                if not os.path.islink(cfile) and (sha1(file) == sha1(cfile)):
-                                    ### YES, THEY ARE THE SAME FILES WITH DIFFERENT NAMES
-                                    logging.debug ('###### Found match '+cfile+' with '+file)
-                                    try:
-                                        ### DELETE DUPLICATE
-                                        subprocess.call (['rm',cfile])
-                                        ### AND CREATE SYMLINK TO SAME FILE
-                                        subprocess.call (['ln','-s',file,cfile])
-                                    except Exception as e:
-                                        ### SOMETHING HAPPENED, LOG IT
-                                        logging.error ('###### COULD NOT CLEANUP '+str(e))
-
-
+                size = str(os.path.getsize(file))
+                if size not in filemap:
+                    filemap[size]=[file]
+                else:
+                    filemap[size].append(file)
+                    if size not in cands:
+                        cands.append(size)
+    for key in cands:
+        for file in filemap[key]:
+            for cfile in filemap[key]:
+                if not os.path.islink(file) and file != cfile and (sha1(file) == sha1(cfile)):
+                    if not os.path.islink(cfile) and (sha1(file) == sha1(cfile)):
+                        ### YES, THEY ARE THE SAME FILES WITH DIFFERENT NAMES
+                        logging.debug ('###### Found match '+cfile+' with '+file)
+                        try:
+                            ### DELETE DUPLICATE
+                            subprocess.call (['rm',cfile])
+                            ### AND CREATE SYMLINK TO SAME FILE
+                            subprocess.call (['ln','-s',file,cfile])
+                        except Exception as e:
+                            ### SOMETHING HAPPENED, LOG IT
+                            logging.error ('###### COULD NOT CLEANUP '+str(e))
+    return
 
 def writeMissing(sysid,file):
     ### THIS FUNCTION WRITES TO THE MISSING LIST
@@ -426,22 +455,24 @@ def waitNewDay(runTime):
         logging.info ('###### WAITING FOR NEXT DAY')
         API = "jeuInfos"
         params = None
-        params =fixParams
+        params =dict(fixParams)
         params['gameid'] = 1
-        response = callApi(fixedURL,API,params,0,anon)
+        response = callApi(fixedURL,API,params,0,anon,'','WAIT NEW DAY')
         anon = not anon
         if 'ssuser'  in response:
             allowed = True
     logging.info ('###### FINISHED WAITING')
     return
 
-def callAPI(URL, API, PARAMS, CURRSSID,Anon=False,Version=''):
+def callAPI(URL, API, PARAMS, CURRSSID,Anon=False,Version='',tolog=''):
+    logging.debug ('###### CALLING API WITH EXTRA '+tolog)
     ### FNCTION THAT ACTUALLY DOES THE CALL TO THE API
     retries = 10
     ### IS IT AN ANONYMOUS CALL
     if not Anon:
         ### NO IT IS NOT, ADD USER PARAMETERS
-        PARAMS['ssid'] = config.ssid[CURRSSID]
+       logging.debug ('##### CALLING API AS NOT ANONYMOUS')
+       PARAMS['ssid'] = config.ssid[CURRSSID]
     else:
         ### IT IS, USER PARAMETER IS EMPTY
         logging.debug ('##### CALLING API AS ANONYMOUS')
@@ -460,8 +491,7 @@ def callAPI(URL, API, PARAMS, CURRSSID,Anon=False,Version=''):
         retJson = None
         try:
             logging.debug ('###### CALLING URL '+callURL)
-            response = urllib2.urlopen(callURL,timeout=20)
-            response = response.read()
+            response = callAPIURL(callURL)
             if Anon:
                 logging.debug('###### ANON RESPONSE '+str(response))
                 logging.debug('###### CALLING '+str(callURL))
@@ -475,8 +505,7 @@ def callAPI(URL, API, PARAMS, CURRSSID,Anon=False,Version=''):
                     #### RETURN WHEN THERE ALLOWANCE IS DONE
                     #### waitNewDay(runTime)
                     return 'QUOTA'
-                    response = urllib2.urlopen(callURL,timeout=20)
-                    response = response.read()
+                    response = callAPIURL(callURL) 
                     if '{' in response:
                         a = '{'+response.split('{', 1)[1]
                         response = a.rsplit('}', 1)[0] + '}'
@@ -554,6 +583,8 @@ def grabVideo (URL,destfile,tout):
 
 def validateImage(imagefile):
     try:
+        if os.path.islink(imagefile):
+            return True
         im=Image.open(imagefile)
         return True
     except IOError:
@@ -780,7 +811,7 @@ def getAllSystems(CURRSSID):
     logging.debug ('###### GETTING ALL SYSTEMS LIST')
     ### THIS IS THE API NAME
     API = "systemesListe"
-    response = callAPI(fixedURL, API, fixParams, CURRSSID)
+    response = callAPI(fixedURL, API, fixParams, CURRSSID,False,'','Get All Systems')
     ### IF WE GET A RESPONSE THEN RETURN THE LIST
     if 'Error' not in response.keys():
         try:
@@ -791,8 +822,61 @@ def getAllSystems(CURRSSID):
         ### WE COULD NOT GET THE LIST OF SYSTEMS SO RETURN EMPTY
         return ''
 
+def deleteHashCache(file):
+    logging.debug ('####### GOING TO REMOVE HASH CACHE FOR '+file)
+    sql = "DELETE FROM filehashes WHERE file = %s"
+    val = (file, )
+    connected = False
+    logging.debug ('###### TRYING TO DELETE INFO IN HASH DB FOR '+file)
+    mycursor = mydb.cursor()
+    try:
+        mycursor.execute(sql, val)
+        if mycursor.rowcount == 0:
+            logging.debug ('###### NOT FOUND IN THE DB')
+            return ''
+        else:
+            logging.debug('###### RECORDS DELETED')
+    except Exception as e:
+            logging.error ('###### ERROR DELETING RECORDS FOR '+file+' FROM DB :'+str(e))
+    return ''
+
+
+def getAllGamesinDB():
+    result = ''
+    logging.debug ('###### CONNECTING TO DB TO GET ALL FILE HASHES ')
+    connected = False
+    while not connected:
+        logging.debug ('###### TRYING TO CONNECT')
+        try:
+            mycursor = mydb.cursor()
+            connected = True
+            logging.debug ('###### CONNECTED SUCCESFULLY')
+        except Exception as e:
+            logging.error ('###### CANNOT CONNECT TO DB - '+str(e))
+            logging.error ('###### WAITING AND RETRYING')
+            sleep(60)
+    sql = "SELECT file,SHA1,CRC,MD5 FROM filehashes"
+    val = ()
+    connected = False
+    logging.debug ('###### TRYING TO QUERY DB FOR ALL FILE HASHES')
+    try:
+        mycursor.execute(sql, val)
+        logging.debug ('@@@@@@@@@@ '+str(mycursor.statement))
+        if mycursor.rowcount == 0:
+            logging.debug ('###### FILEHASHES TABLE SEEMS TO BE EMPTY')
+            return ''
+        else:
+            results = mycursor.fetchall()
+            logging.error ('###### FOUND '+str(len(results))+' RESULTS FOR FILE HASHES')
+            return results
+    except Exception as e:
+        logging.error ('###### CANNOT QUERY THE DB DUE TO ERROR - '+str(e))
+        return ''
+    return ''
+
 
 def lookupHashInDB(file,hashType):
+    result = ''
     logging.debug ('###### CONNECTING TO DB TO LOCATE HASH '+hashType+' FOR '+file)
     connected = False
     while not connected:
@@ -811,6 +895,7 @@ def lookupHashInDB(file,hashType):
     logging.debug ('###### TRYING TO QUERY DB FOR '+hashType)
     try:
         mycursor.execute(sql, val)
+        logging.debug ('@@@@@@@@@@ '+str(mycursor.statement))
         if mycursor.rowcount == 0:
             logging.debug ('###### NO '+hashType+' FOUND IN THE DB')
             return ''
@@ -827,14 +912,14 @@ def lookupHashInDB(file,hashType):
 def updateHashInDB(file,hashType,hash):
     logging.debug ('###### UPDATING '+hashType+' '+hash+' FOR FILE '+file)
     mycursor = mydb.cursor()
-    sql = "UPDATE filehashes SET "+hashType.upper()+"= %s WHERE file = %s"
+    sql = "UPDATE filehashes SET "+hashType.upper()+"= %s WHERE file = \"%s\""
     val =[(str(hash),str(file))]
     try:
         mycursor.executemany(sql, val)
         mydb.commit()
+        logging.debug ('###### UPDATED '+hashType+' '+hash+' FOR FILE '+file)
     except Exception as e:
         logging.error ('###### COULD NOT UPDATE DATA IN DB ' +str(e))
-        logging.debug('###### UPDATED LOCAL CACHE')
     return
 
 def insertHashInDB(file,hashType,hash):
@@ -845,6 +930,7 @@ def insertHashInDB(file,hashType,hash):
     try:
         mycursor.executemany(sql, val)
         mydb.commit()
+        logging.debug('###### INSERTED '+hashType.upper()+' '+str(hash)+' FOR FILE '+file)
     except Exception as e:
         logging.error ('###### COULD NOT INSTERT DATA IN DB ' +str(e))
         logging.debug('###### UPDATED LOCAL CACHE')
@@ -853,16 +939,21 @@ def insertHashInDB(file,hashType,hash):
 
 
 def md5(fname):
+    dbval =''
     dbval = lookupHashInDB(fname,'MD5')
     if dbval !='' and dbval != None:
+        logging.debug('###### FOUND SOMETHING IN DB FOR '+fname+' SO RETURNING MD5='+str(dbval))
         return dbval
     logging.debug ('###### NOT IN DB SO CALCULATING MD5 OF FILE '+fname)
     try:
+        retval = None
+        hash_md5 = None
         hash_md5 = hashlib.md5()
         with open(fname, "rb") as f:
             for chunk in iter(lambda: f.read(4096), b""):
                 hash_md5.update(chunk)
         retval = hash_md5.hexdigest()
+        logging.debug('###### CALCULATED MD5 FOR '+fname+' '+str(retval))
         insertHashInDB(fname,'MD5',retval)
         return retval
     except Exception as e:
@@ -870,19 +961,16 @@ def md5(fname):
         return ''
 
 def sha1(fname):
+    dbval = ''
     dbval = lookupHashInDB(fname,'SHA1')
     if dbval !='' and dbval != None:
-        logging.debug ('###### RETURNING VALUE FOUND IN DB')
+        logging.debug ('###### FOUND SHA1 '+str(dbval)+' FOR FILE '+fname)
         return dbval
     logging.debug ('###### NOT IN DB SO CALCULATING SHA1 OF FILE '+fname)
     try:
-        logging.debug ('###### FILE SIZE '+str(os.stat(fname).st_size))
-        if os.stat(fname).st_size > 70000:
-            logging.debug ('###### BIG FILE SIZE '+str(os.stat(fname).st_size))
-            BLOCKSIZE = 65536
-        else:
-            logging.debug ('###### SMALL FILE SIZE '+str(os.stat(fname).st_size))
-            BLOCKSIZE = 1
+        retval = None
+        BLOCKSIZE = 65536
+        hasher = None
         hasher = hashlib.sha1()
         with open(fname, 'rb') as afile:
             buf = afile.read(BLOCKSIZE)
@@ -890,6 +978,7 @@ def sha1(fname):
                 hasher.update(buf)
                 buf = afile.read(BLOCKSIZE)
         retval = hasher.hexdigest()
+        logging.debug ('###### SHA 1 '+str(retval)+' CALCULATED FOR FILE '+fname)
         insertHashInDB(fname,'SHA1',retval)
         return retval
     except Exception as e:
@@ -897,22 +986,28 @@ def sha1(fname):
         return ''
 
 def crc(fileName):
+    dbval=''
     dbval = lookupHashInDB(fileName,'CRC')
     if dbval !='' and dbval != None:
+        logging.debug ('###### FOUND CRC '+str(dbval)+' FOR FILE '+fileName)
         return dbval
     logging.debug ('###### NOT IN DB SO CALCULATING CRC OF FILE '+fileName)
     try:
+        retval = None
         prev = 0
         for eachLine in open(fileName, "rb"):
             prev = zlib.crc32(eachLine, prev)
         retval = "%X" % (prev & 0xFFFFFFFF)
         insertHashInDB(fileName,'CRC',retval)
+        logging.debug ('###### CALUCLATED CRC '+str(retval)+' FOR FILE '+fileName)
         return retval
     except Exception as e:
         logging.error('COULD NOT CALCULATE CRC ' + str(e))
         return ''
 
 def escapeFileName(file):
+    ### ADDED ADDED
+    return file
     logging.debug ('###### ESCAPING FILENAME '+file)
     escapedfile = unicode(file)
     if escapedfile[0] == "'":
@@ -926,7 +1021,7 @@ def escapeFileName(file):
     escapedfile = escapedfile.replace(' ', '_')
     escapedfile = escapedfile.replace('^', '_')
     escapedfile = escapedfile.replace(',', '_')
-    escapedfile = escapedfile.replace('\'', '_')
+    escapedfile= escapedfile.replace('\'', '_')
     escapedfile = escapedfile.replace('"', '_')
     escapedfile = escapedfile.replace('\\', '_')
     escapedfile = escapedfile.replace('*', '_')
@@ -1046,8 +1141,11 @@ def processZip(path,zipfile,CURRSSID,extensions,sysid):
             proczfile = proczfile[0 if proczfile.rfind('/')<0 else proczfile.rfind('/')+1:]
             logging.debug ('##### FILE IS CONVERTED TO '+proczfile)
             proczfile,gameinfo = processFile (path,proczfile,CURRSSID,False,sysid)
+            shazfile = ''
             shazfile=sha1(path+'/'+proczfile)
+            crczfile = ''
             crczfile=crc(path+'/'+proczfile)
+            md5zfile = ''
             md5zfile=md5(path+'/'+proczfile)
             try:
                 if os.path.isfile(path + '/' + proczfile):
@@ -1069,7 +1167,11 @@ def processZip(path,zipfile,CURRSSID,extensions,sysid):
 def processDir(dir,path,CURRSSID,extensions,sysid):
     logging.info ('###### STARTING DIRECTORY PROCESS')
     logging.debug ('##### CHANGING DIRECTORY TO '+path+'/'+dir)
-    os.chdir(path+'/'+dir)
+    try:
+        os.chdir(path+'/'+dir)
+    except Exception as e:
+        logging.error('###### COULD NOT CHANGE TO DIRECTORY '+path+'/'+dir+' PLEASE VERIFY')
+        return None
     schextensions = '**[.zip'
     for exten in extensions:
         schextensions = schextensions+'|'+exten
@@ -1149,13 +1251,17 @@ def processFile (path,file,CURRSSID,doRename,sysid):
     ### CALCULATE DIFFERENT CHECKSUMS
     logging.debug ('###### CALCULATING HASHES FOR FILE '+file)
     ### MD5
+    md5offile = ''
     md5offile = md5(path+'/'+file)
     ### SHA1
+    sha1offile = ''
     sha1offile = sha1(path+'/'+file)
     ### CRC
+    crcoffile = ''
     crcoffile = crc(path+'/'+file)
     logging.debug ('##### GETTING GAME INFO '+str(path)+'/'+str(file)+' '+str(md5offile)+' '+str(sha1offile)+' '+str(crcoffile))
     ### TRY TO GET GAME INFORMATION
+    gameinfo = None
     file, gameinfo = getGameInfo(CURRSSID, path, file, md5offile, sha1offile, crcoffile,sysid)
     ### IF WE RECEIVE 'SKIP' THEN IT MEANS WE NEED TO SKIP THIS GAME FOR A REASON (USUALLY SCRAPE QUOTA IS OVER)
     if gameinfo == 'SKIP':
@@ -1230,6 +1336,7 @@ def grabData(system, path, CURRSSID, acceptedExtens):
         if gameinfo is not None:
             try:
                 ### YES, CREATE A GAME INSTANCE THEN
+                thisGame = None
                 thisGame = Game(gameinfo)
             except Exception as e:
                 ### THERE WAS AN ERROR CREATING GAME INSTANCE, NOTIFY
@@ -1308,9 +1415,9 @@ def deleteFromDB(sha1):
         return ''
     return ''
 
-def locateShainDB(sha1):
+def locateShainDB(mysha1):
     result = ''
-    logging.debug ('###### CONNECTING TO DB TO LOCATE DATA FOR '+sha1)
+    logging.debug ('###### CONNECTING TO DB TO LOCATE DATA FOR '+mysha1)
     connected = False
     while not connected:
         logging.debug ('###### TRYING TO CONNECT')
@@ -1323,7 +1430,7 @@ def locateShainDB(sha1):
             logging.error ('###### WAITING AND RETRYING')
             sleep(60)
     sql = "SELECT response FROM hashes WHERE hash = %s"
-    val = (sha1, )
+    val = (mysha1, )
     connected = False
     logging.debug ('###### TRYING TO QUERY DB')
     try:
@@ -1348,15 +1455,15 @@ def locateShainDB(sha1):
     if 'urlopen error' in str(value) or 'QUOTA' in str(value) or 'Faite du tri' in str(value):
         ## Delete from DB
         logging.debug ('###### DELETING RECORD FROM DB')
-        deleteFromDB(sha1)
+        deleteFromDB(mysha1)
         return ''
     return value
 
-def updateDB(sha1,response):
+def updateDB(mysha1,response):
     if not 'urlopen error' in response:
         mycursor = mydb.cursor()
         sql = "REPLACE INTO hashes (hash, response) VALUES (%s, %s)"
-        val =[(str(sha1),str(response))]
+        val =[(str(mysha1),str(response))]
         try:
             result = mycursor.executemany(sql, val)
             mydb.commit()
@@ -1368,11 +1475,39 @@ def updateDB(sha1,response):
     else:
         return
 
+def deleteHashFromDB(filename):
+    mycursor = mydb.cursor()
+    sql = 'DELETE FROM filehashes file = %s'
+    val =(str(filename))
+    try:
+        result = mycursor.execute(sql, val)
+        mydb.commit()
+        logging.debug ('@@@@@@@@@@ '+str(mycursor.statement))
+        logging.info ('###### DB UPDATED OK ['+str(result)+']')
+    except Exception as e:
+        logging.error ('###### COULD NOT DELETE FROM DB ' +str(e))
+        return 1
+    return 0
 
-def getGameInfo(CURRSSID, pathtofile, file, md5, sha1, crc, sysid):
+
+def updateDBFile(origfile,destfile):
+    mycursor = mydb.cursor()
+    sql = 'UPDATE filehashes SET file = %s WHERE file = %s'
+    val =(str(destfile),str(origfile))
+    try:
+        result = mycursor.execute(sql, val)
+        mydb.commit()
+        logging.debug ('@@@@@@@@@@ '+str(mycursor.statement))
+        logging.info ('###### DB UPDATED OK ['+str(result)+']')
+    except Exception as e:
+        logging.error ('###### COULD NOT INSTERT DATA IN DB ' +str(e))
+        return 1
+    return 0
+
+def getGameInfo(CURRSSID, pathtofile, file, mymd5, mysha1, mycrc, sysid):
     ### THIS IS WHERE EVERYTHING HAPPENS
     ### IS ANY OF THE PARAMETERS EMPTY?
-    if md5 == '' or sha1 == '' or crc == '':
+    if mymd5 == '' or mysha1 == '' or mycrc == '':
         # YES, GO BACK
         return file,None
     logging.info ('###### GETTING GAME INFORMATION')
@@ -1380,17 +1515,17 @@ def getGameInfo(CURRSSID, pathtofile, file, md5, sha1, crc, sysid):
     API = "jeuInfos"
     ### INITIALIZE PARAMETERS, STARTING BY THE FIXED ONES (SEE CONFIG)
     params = None
-    params = fixParams
+    params = dict(fixParams)
     ### ADD MD5
-    params['md5'] = md5
+    params['md5'] = mymd5
     ### ADD SHA1
-    params['sha1'] = sha1
+    params['sha1'] = mysha1
     ### ADD CRC
-    params['crc'] = crc
+    params['crc'] = mycrc
     ### INITIQLIZE VARIABLES TO AVOID ACRRY ON VALUES
     response = None
     ### FIRST, TRY TO GET THE ANSWER FRO THE DB, THIS IS DONE SO WE DO NOT CALL THE SCRAPER EVRYTIME IF WE HAVE ALREADY FETCHED INFORMATION FOR THIS PARTICULAR SHA
-    response = locateShainDB(sha1)
+    response = locateShainDB(mysha1)
     ### DID WE SOMEHOW GOT AN EMPTY RESPONSE?
     if response !='':
         ### WE DID GET A RESPONSE
@@ -1423,7 +1558,7 @@ def getGameInfo(CURRSSID, pathtofile, file, md5, sha1, crc, sysid):
                 ### NO WE DON'T SO WE ADD IT AS 0 SO YOU CAN REPLACE IT AFTERWARDS IN THE DB
                 response['GameID']='0'
                 ### AND WE UPDATE THE DB WITH THE RESULT (REGARDLESS IF IT WAS IN THE DB OR NOT PREVIOUSLY)
-                updateDB (sha1,response)
+                updateDB (mysha1,response)
                 ### INFORM LOG THAT YOU COULD EVENTUALLY UPDATE GAMEID
                 logging.debug ('###### YOU CAN UPDATE GAME ID FOR '+file)
                 ### AND RETURN RESPONSE
@@ -1433,7 +1568,7 @@ def getGameInfo(CURRSSID, pathtofile, file, md5, sha1, crc, sysid):
                 logging.debug ('###### GOT A GAME ID FROM DB '+str(response))
                 ### SO NOW INITIALIZE GAME PARAMETERS FOR NEW SEARCH , FIRST EMPTY THEN ASSIGN, JUST IN CASE
                 gameparams = None
-                gameparams = fixParams
+                gameparams = dict(fixParams)
                 ### OK, WE GOT A GAME ID, BUT IS IT 0?
                 if response['GameID'] !='0':
                     ### NO IT IS NOT, SO WE CAN GO AHEAD AND GET IT
@@ -1441,12 +1576,13 @@ def getGameInfo(CURRSSID, pathtofile, file, md5, sha1, crc, sysid):
                     ### ADD GAMEID TO PARAMETERS
                     gameparams['gameid'] = response['GameID']
                     ### AND GET THE RESPONSE TO THE CALL
-                    newresponse = callAPI(fixedURL,API,gameparams,CURRSSID)
+                    newresponse = callAPI(fixedURL,API,gameparams,CURRSSID,False,'','THERE IS A GAME ID HERE')
                     ### CHECK IF WE WENT OVER QUOTA
                     if newresponse == 'QUOTA':
                         logging.debug ('###### QUOTA DONE')
                         ### WE DID, CAN WE TRY CALLING ANONYMOUS?
-                        newresponse = callAPI(fixedURL, API, gameparams, CURRSSID,True)
+                        newresponse = None
+                        newresponse = callAPI(fixedURL, API, gameparams, CURRSSID,True,'','NEWRESPONSE IN QUOTA')
                         if newresponse == 'QUOTA':
                             ### NO WE CANNOT
                             return file, 'SKIP'
@@ -1455,9 +1591,10 @@ def getGameInfo(CURRSSID, pathtofile, file, md5, sha1, crc, sysid):
                         ### YES WE DID
                         logging.debug ('###### SSUSER IS IN RESPONSE')
                         ### ASSIGN NEW RESPONSE TO OLD ONE, SO WE DO NOT CONFUSE OURSELVES
+                        response = None
                         response = newresponse
                         ### AND UPDATE THE DB WITH THE NEW ANSWER
-                        updateDB (sha1,response)
+                        updateDB (mysha1,response)
                         ### AND SINCE WE GOT A PROPER ANSWER (AND NEW) WE DO NOT HAVE TO UPDATE THE CALL
                         doupdate = False
                     else:
@@ -1471,17 +1608,20 @@ def getGameInfo(CURRSSID, pathtofile, file, md5, sha1, crc, sysid):
             logging.debug ('###### TRYING TO UPDATE CACHE DATA')
             ### WE INITIALIZE THE FIXED PARAMETERS
             gameparams = None
-            gameparams = fixParams
+            gameparams = dict(fixParams)
             ### AND WE ADD THE GAME ID, WHICH WE SHOULD HAVE. THIS IS TO AVOID TRYING TO UPDATE CHECKSUMS THAT ARE NOT EXISTING IN SITE
+            # MODIFY HERE MODIFY HERE
             gameparams['gameid'] = response['jeu']['id']
             ### AND WE CALL THE API
-            newresponse = callAPI(fixedURL,API,gameparams,CURRSSID)
+            newresponse = None
+            newresponse = callAPI(fixedURL,API,gameparams,CURRSSID,False,'','FROM UPDATEDATA')
             ### ARE WE OVER THE ALLOWED QUOTA?
             if newresponse == 'QUOTA':
                 ### YES
                 logging.info ('###### QUOTA DONE, TRYING ANON')
                 ### CAN WE TRY TO CALL IT ANONYMOUSLY?
-                newresponse = callAPI(fixedURL, API, gameparams, CURRSSID,True)
+                newresponse = None
+                newresponse = callAPI(fixedURL, API, gameparams, CURRSSID,True,'','QUOTA NEWRESPONSE')
                 if newresponse == 'QUOTA':
                     ### NO WE CAN'T
                     logging.info ('###### QUOTA REALLY DONE, NOT UPDATING')
@@ -1490,19 +1630,22 @@ def getGameInfo(CURRSSID, pathtofile, file, md5, sha1, crc, sysid):
             ### DID WE GET A VALID RESPONSE??? (REMMEBER SSUSER)
             if 'ssuser' in newresponse:
                 ### YES WE DID
+                response = None
                 response = newresponse
                 logging.info ('###### GOT UPDATED VERSION FROM API')
-                updateDB (sha1,response)
+                updateDB (mysha1,response)
                 return file,response
     else:
         ### WE COULD NOT LOCATE THE SHA IN DB
         logging.error('###### CACHE DOES NOT EXISTE IN DB FOR ' + file)
         ### CALL THE API TO GET AN ANSWER
-        response = callAPI(fixedURL, API, params, CURRSSID)
+        response = None
+        response = callAPI(fixedURL, API, params, CURRSSID,False,'','NO SHA IN DB')
         ### ARE WE OVER THE QUOTA?
         if response == 'QUOTA':
             ### WE ARE, CAN WE CALL ANONYMOUSLY?
-            response = callAPI(fixedURL, API, params, CURRSSID,True)
+            response = None
+            response = callAPI(fixedURL, API, params, CURRSSID,True,'','NO SHA IN DB AND QUOTA')
             if response == 'QUOTA':
                 ### NO WE CAN'T
                 return file, 'SKIP'
@@ -1510,12 +1653,12 @@ def getGameInfo(CURRSSID, pathtofile, file, md5, sha1, crc, sysid):
         if ('ssuser' not in response) and ('gameid' not in response):
             ### NO WE DID NOT, ADD LOCAL PVALUES
             response['file'] = pathtofile + '/' + file
-            response['localhash'] = sha1
+            response['localhash'] = mysha1
             response['GameID'] = '0'
-            updateDB (sha1,response)
+            updateDB (mysha1,response)
         else:
             logging.debug ('###### GOT ANSWER FROM API, UPDATING DB')
-            updateDB (sha1,response)
+            updateDB (mysha1,response)
     ### SO NOW WE HAVE A RESPONSE, LET'S TREAT IT
     ### WE ASSUME THE ROM WAS NOT FOUND
     foundRom = False
@@ -1526,7 +1669,7 @@ def getGameInfo(CURRSSID, pathtofile, file, md5, sha1, crc, sysid):
         ### SO WE CREATE AN EMPTY ANSWER AND RETURN IT
         return file,{'abspath': pathtofile,
                 'localpath': pathtofile+'/'+file,
-                'localhash': sha1.upper(),
+                'localhash': mysha1.upper(),
                 'jeu':
                 {
                  'nom': file,
@@ -1537,7 +1680,7 @@ def getGameInfo(CURRSSID, pathtofile, file, md5, sha1, crc, sysid):
                 }
     ## SO NOW WE HAVE A PROPER ANSER TO RETURN`, BUT WE ADD THE LOCAL VALUES
     response['localpath'] = pathtofile+'/'+escapeFileName(file)
-    response['localhash'] = sha1.upper()
+    response['localhash'] = mysha1.upper()
     response['abspath'] = pathtofile
     ### AND RETURN IT
     return file,response
@@ -1643,73 +1786,21 @@ def gameNameMatches(orig,chk):
         if str(chkname) == str(orig):
             logging.info ('###### NAME MATCHES')
             return True
-        sorig = orig.replace('&','AND')
-        logging.info ('###### COMPARING ['+sorig+'] WITH ['+chkname+']')
-        if str(chkname) == str(sorig):
-            logging.info ('###### NAME MATCHES')
-            return True
-        sorig = orig.replace(' XII',' 12')
-        logging.info ('###### COMPARING ['+sorig+'] WITH ['+chkname+']')
-        if str(chkname) == str(sorig):
-            logging.info ('###### NAME MATCHES')
-            return True
-        sorig = orig.replace(' XI',' 11')
-        logging.info ('###### COMPARING ['+sorig+'] WITH ['+chkname+']')
-        if str(chkname) == str(sorig):
-            logging.info ('###### NAME MATCHES')
-            return True
-        sorig = orig.replace(' X',' 10')
-        logging.info ('###### COMPARING ['+sorig+'] WITH ['+chkname+']')
-        if str(chkname) == str(sorig):
-            logging.info ('###### NAME MATCHES')
-            return True
-        sorig = orig.replace(' IX',' 9')
-        logging.info ('###### COMPARING ['+sorig+'] WITH ['+chkname+']')
-        if str(chkname) == str(sorig):
-            logging.info ('###### NAME MATCHES')
-            return True
-        sorig = orig.replace(' VIII',' 8')
-        logging.info ('###### COMPARING ['+sorig+'] WITH ['+chkname+']')
-        if str(chkname) == str(sorig):
-            logging.info ('###### NAME MATCHES')
-            return True
-        sorig = orig.replace(' VII',' 7')
-        logging.info ('###### COMPARING ['+sorig+'] WITH ['+chkname+']')
-        if str(chkname) == str(sorig):
-            logging.info ('###### NAME MATCHES')
-            return True
-        sorig = orig.replace(' VI',' 6')
-        logging.info ('###### COMPARING ['+sorig+'] WITH ['+chkname+']')
-        if str(chkname) == str(sorig):
-            logging.info ('###### NAME MATCHES')
-            return True
-        sorig = orig.replace(' IV',' 4')
-        logging.info ('###### COMPARING ['+sorig+'] WITH ['+chkname+']')
-        if str(chkname) == str(sorig):
-            logging.info ('###### NAME MATCHES')
-            return True
-        sorig = orig.replace(' V',' 5')
-        logging.info ('###### COMPARING ['+sorig+'] WITH ['+chkname+']')
-        if str(chkname) == str(sorig):
-            logging.info ('###### NAME MATCHES')
-            return True
-        sorig = orig.replace(' III',' 3')
-        logging.info ('###### COMPARING ['+sorig+'] WITH ['+chkname+']')
-        if str(chkname) == str(sorig):
-            logging.info ('###### NAME MATCHES')
-            return True
-        sorig = orig.replace(' II',' 2')
-        logging.info ('###### COMPARING ['+sorig+'] WITH ['+chkname+']')
-        if str(chkname) == str(sorig):
-            logging.info ('###### NAME MATCHES')
-            return True
-        sorig = orig.replace(' I',' 1')
-        logging.info ('###### COMPARING ['+sorig+'] WITH ['+chkname+']')
-        if str(chkname) == str(sorig):
-            logging.info ('###### NAME MATCHES')
-            return True
-        sorig = orig.replace(' S ','\'S ')
-        logging.info ('###### COMPARING ['+sorig+'] WITH ['+chkname+']')
+        orig = orig.replace('&','AND')
+        orig = orig.replace(' XII',' 12')
+        orig = orig.replace(' XI',' 11')
+        orig = orig.replace(' X',' 10')
+        orig = orig.replace(' IX',' 9')
+        orig = orig.replace(' VIII',' 8')
+        orig = orig.replace(' VII',' 7')
+        orig = orig.replace(' VI',' 6')
+        orig = orig.replace(' IV',' 4')
+        orig = orig.replace(' V',' 5')
+        orig = orig.replace(' III',' 3')
+        orig = orig.replace(' II',' 2')
+        orig = orig.replace(' I',' 1')
+        orig = orig.replace(' S ','\'S')
+        logging.info ('###### COMPARING ['+orig+'] WITH ['+chkname+']')
         if str(chkname) == str(orig):
             logging.info ('###### NAME MATCHES')
             return True
@@ -1734,8 +1825,7 @@ def getArcadeName(name):
     if namefromcsv != '':
         return namefromcsv
     try:
-        response = urllib2.urlopen(callURL,timeout=20)
-        response = response.read()
+        response = callAPIURL(callURL) 
         gamename = re.findall("<title>(.*?)</title>", response)[0].replace('Game Details:  ','').replace(' - mamedb.com','')
         logging.info ('###### FOUND GAME IN MAMEDB '+gamename)
         return gamename
@@ -1743,8 +1833,7 @@ def getArcadeName(name):
         logging.error('###### COULD NOT GET ARCADE NAME FROM MAMEDB')
         logging.info('###### TRYING WITH ARCADEITALIA IN URL '+callURL2)
         try:
-            response = urllib2.urlopen(callURL2,timeout=20)
-            response = response.read()
+            response = callAPIURL(callURL) 
             gamename = re.findall("<title>(.*?)</title>", response)[0].replace(' - MAME machine','').replace(' - MAME software','')
             gamename = gamename.replace(' - MAME machin...','')
             logging.info ('###### FOUND GAME IN ARCADEITALIA '+gamename)
@@ -1764,7 +1853,7 @@ def deleteFile (file):
 def findMissing():
     ### GET ALL SYSTEMS, THIS IS DONE TO HAVE A LIST OF ARCADE RELATED SYSTEMS
     systems = getAllSystems(CURRSSID)
-    arcadeSystems = [75,142]
+    arcadeSystems = [75]
     '''
     for system in systems:
         if 'ARCADE' in system['type'].upper():
@@ -1775,12 +1864,13 @@ def findMissing():
     with open(missing) as csv_file:
         csv_reader = csv.reader(csv_file, delimiter=',')
         line_count = 0
+        newGameId = 0
         for row in csv_reader:
             newline =''
             ### clean previous done
             ### CHECK IF THERE IS A SEVENTH COLUMN, WHICH WOULD BE THE GAMEID TO INSERT
             newmode = False
-            newGameId = 0
+            sha = str(row[2])
             try:
                 logging.info ('###### LOOKING IF THERE IS SOMETHING TO DO')
                 whattodo = str(row[6]).upper()
@@ -1819,17 +1909,16 @@ def findMissing():
             ### WE DO NOT HAVE A GAME ID, SO WE HAVE TO SEARCH FOR IT
             logging.info('###### IS THIS A NEW MODE '+str(newmode))
             if newGameId == 0 and not newmode:
-                updateGameID (row[1],row[2],'0')
-                newline = row[0]+','+row[1]+','+row[2]+','+row[3]+','+row[4]+','+row[5]+',FORCED_ID'
+                updateGameID (row[1],sha,'0')
+                newline = row[0]+','+row[1]+','+sha+','+row[3]+','+row[4]+','+row[5]+',FORCED_ID'
                 system=row[0]
                 logging.info ('###### DOING RESEARCH FOR '+row[1]+' IN SYSTEM '+str(system))
-                if str(system) != '75' and str(system) != '142':
+                if str(system) != '75':
                     searchSystems=[system]
                     filename=(row[1][row[1].rfind('/')+1:row[1].rfind('.')]).replace('_',' ')
                     ### GBA Exception
                     if str(system) == '12':
                         filename = filename[7:]
-                    ### REPLACING BACK THE ' THAT MIGHT HAVE BEEN REMOVED
                 else:
                     filename=row[1][row[1].rfind('/')+1:row[1].rfind('.')]
                     filename = getArcadeName(filename)
@@ -1837,17 +1926,14 @@ def findMissing():
                     searchSystems = arcadeSystems
                 logging.info ('###### WILL SEARCH IN '+str(searchSystems))
                 subOne = (re.sub('[V|v]+\d+.\d+','',filename)).strip()
-                ##subTwo = (subOne.rstrip('0123456789')).strip()
-                subThree = (re.sub(r'\[[^)]*\]','',subOne)).strip()
+                subTwo = (subOne.rstrip('0123456789')).strip()
+                subThree = (re.sub(r'\[[^)]*\]','',subTwo)).strip()
                 myGameName = (re.sub(r'\([^)]*\)','',subThree)).strip()
                 myGameName = myGameName.replace('   ',' ')
                 myGameName = myGameName.replace('  ',' ')
-                myGameName = myGameName.replace(' S ','\'S ')
-                myGameName = myGameName.replace(' s ','\'s ')
                 if myGameName !='':
-                    sha = row[2]
                     myParams = None
-                    myParams = fixParams
+                    myParams = dict(fixParams)
                     logging.info ('###### STRIPPED TO '+myGameName)
                     keepon = True
                     found = False
@@ -1855,19 +1941,25 @@ def findMissing():
                     full = True
                     returnValue = {}
                     totalWords = len(myGameName.split(' '))
-                    ansretries = totalWords
-                    myParams['recherche']=myGameName.split(' ')[0]
+                    ansretries = totalWords # Siempre voy a bsucar 2 veces, una con nombre original y otro capitalizado
+                    gameSearch = myGameName.split(' ')[0]
+                    if len(gameSearch)<4:
+                        try:
+                            gameSearch = gameSearch+' '+myGameName.split(' ')[1] #SI son menos de 3 caracteres anado segunda palabra
+                        except:
+                            logging.error ('###### IMPOSSIBLE TO LOOK UP '+gameSearch+', IT HAS LESS THAN 4 CHARACTERS WHICH IS THE MINIMUM NEEDED')
+                    myParams['recherche']=gameSearch
                     if myParams['recherche'].upper() == 'EAMON':
                             myParams['recherche'] = myParams['recherche'] + ' ' + myGameName.split(' ')[1]
-                            ansretries = ansretries - 1
+                            #ansretries = ansretries - 1
                             totalWords = totalWords - 1
                             if len(myGameName.split(' '))>3:
                                 myParams['recherche'] = myParams['recherche'] + ' ' + myGameName.split(' ')[3]
-                                ansretries = ansretries - 1
+                                #ansretries = ansretries - 1
                                 totalWords = totalWords - 1
                             if len(myGameName.split(' '))>4:
                                 myParams['recherche'] = myParams['recherche'] + ' ' + myGameName.split(' ')[4]
-                                ansretries = ansretries - 1
+                                #ansretries = ansretries - 1
                                 totalWords = totalWords - 1
                     found = False
                     systemPos = 0
@@ -1875,11 +1967,14 @@ def findMissing():
                     origsearch = myParams['recherche']
                     while (ansretries > 0) and not found and systemPos<len(searchSystems):
                         myParams['systemeid']=searchSystems[systemPos]
-                        ## VOY A BUSCAR LOS TRES PRMEROS CARACTERES, Y DESPUES HACER UNA LOGICA EN EL MATCH DE CUANTOS CARACTERES IGUALES HAY
+                        ## VOY A BUSCAR LOS TRES PRMEROS CARACTERES, Y DESPUES HACER UNA LOGICA EN EL MATCH DE CUANTOS CARACTERES IGUALES HAY, NO LOS 4 PRIMEROS
+                        #if ansretries == 1:
+                         #   myParams['recherche']=myParams['recherche'].capitalize()
                         if ansretries < totalWords:
                             myParams['recherche'] = myParams['recherche'] + ' ' + myGameName.split(' ')[totalWords-ansretries]
                         logging.info('###### LOOKING SCRAPER FOR '+myParams['recherche']+ ' FOR SYSTEM '+str(searchSystems[systemPos]))
-                        returnValue = callAPI(fixedURL,API,myParams,0,False,'2')
+                        returnValue = callAPI(fixedURL,API,myParams,0,False,'2',' SYSTEM SOMETHING')
+                        logging.debug (returnValue)
                         if 'jeux' in returnValue.keys():
                             if len(returnValue['jeux']) > 1:
                                 position = 0
@@ -1920,7 +2015,7 @@ def findMissing():
                     writeNewMissing(newline)
             else:
                 if newGameId !=0:
-                    updateGameID (row[1],row[2],newGameId)
+                    updateGameID (row[1],sha,newGameId)
                 logging.info ('###### UPDATED FORCED ID OF '+row[1]+' TO '+str(newGameId))
         logging.info ('###### FINISHED LOOKING FOR MISSING ROMS')
 
@@ -1956,23 +2051,30 @@ def cleanGameList(path):
                         video = gchild.text.decode()
                     except:
                         video = ''
+        logging.debug ('###### FOUND HASH='+sha+' PATH ='+file+' IMAGE='+image+' VIDEO='+video)
         if sha !='' and file != '':
             if image != '':
                 try:
-                    if os.path.isfile(image):
-                        os.remove(image)
-                        logging.info ('###### DELETED IMAGE '+image)
+                    os.remove(image)
+                    logging.info ('###### DELETED IMAGE '+image)
                 except Exception as e:
                     logging.error ('###### COULD NOT DELETE '+image+' '+str(e))
             if video != '':
                 try:
-                    if os.path.isfile(video):
-                        os.remove(video)
-                        logging.info ('###### DELETED VIDEO '+video)
+                    os.remove(video)
+                    logging.info ('###### DELETED VIDEO '+video)
                 except Exception as e:
                     logging.error ('###### COULD NOT DELETE '+video+' '+str(e))
             updateGameID (file,sha,'')
+            deleteHashCache(file) 
             logging.info ('###### REMOVED '+file+' WITH HASH '+sha)
+
+
+def multiDisk(filename):
+    checkreg ='\([D|d][I|i][S|s][K\k].*\)|\([S|s][I|i][D|d][E|e].*\)|\([D|d][I|i][S|s][C|c].*\)|\([T|t][A|a][P|p][E|e].*\)|\([F|f][I|i][L|l][E|e].*\)'
+    matchs = re.search(checkreg,filename)
+    return matchs
+
 def cleanSys(system):
     ### Get all systems from XML
     with open(sysconfig, 'r') as xml_file:
@@ -1995,11 +2097,83 @@ def cleanSys(system):
                             path = nchild.text
     if found:
         glist = path+'/gamelist.xml'
+        logging.info ('###### FOUND GAMELIST IN ' +glist)
         cleanGameList(glist)
         logging.info ('###### FINISHED CLEANING '+glist)
     else:
         logging.error ('###### COULD NOT FIND SYSTEM '+system)
         sys.exit(0)
+
+def updateFile(path,localSHA,localCRC,localMD):
+    ### We need to rename the file
+    ### if succesfull we need to update the DB
+    filepath = path[:path.rindex('/')+1]
+    filext = path[path.rindex('.'):]
+    localfile,thisGame = getGameInfo(0,path,path[path.rindex('/')+1:],localMD,localSHA,localCRC,0)
+    if 'ssuser' not in str(thisGame):
+        ### The game information is not complete, better not to process
+        print 'SKIPPING '+localSHA
+        return
+    else:
+        checkreg ='\([D|d][I|i][S|s][K\k].*\)|\([S|s][I|i][D|d][E|e].*\)|\([D|d][I|i][S|s][C|c].*\)|\([T|t][A|a][P|p][E|e].*\)|\([F|f][I|i][L|l][E|e].*\)'
+        matchs = multiDisk(path)
+        if matchs:
+            destFile = (filepath+thisGame['jeu']['nom']+' '+matchs.group(0).replace('_',' ')+filext).encode('ascii', 'ignore')
+            print destFile
+        else:
+            destFile = (filepath+thisGame['jeu']['nom']+filext).encode('ascii', 'ignore')
+        if destFile != path:
+            res = updateDBFile(path,destFile)
+            if res == 0:
+                ### Rename file
+                try:
+                    os.rename(path,destFile)
+                except:
+                    res = updateDBFile(destFile,path)
+
+def renameFiles():
+    logging.info ('###### - STARTING FILE RENAMING PROCESS')
+    ### Exclude directories, or directories where you do not wish to rename files (retropie, etc..)
+    excludeDirs = ['/retropie/','/arcade/','/neogeo/','/retropiemenu/']
+    ### Connect to DB to get all files
+    hashes = getAllGamesinDB()
+    procfiles = 0
+    logging.info ('###### - FOUND '+str(len(hashes))+' HASHES IN DB')
+    for hash in hashes:
+        thisfile = hash[0]
+        sha1offile = hash[1]
+        crcoffile = hash[2]
+        mdoffile = hash[3]
+        logging.info ('###### - START FILE '+thisfile)
+        if thisfile.count('/') > 1:
+            logging.debug ('###### - IT HAS MORE THAN 2 /')
+            process = True
+            for excdir in excludeDirs:
+                if excdir in thisfile:
+                    process = False
+                    logging.debug ('###### - BUT IT IS IN AN EXCLUDED DIRECTORY')
+            if not os.path.isfile(thisfile):
+                ### File no longer exists, let's cleanup the DB
+                logging.debug ('###### - BUT FILE DOES NOT EXIST ANYMORE')
+                process = False
+                deleteHashFromDB (thisfile)
+            if process:
+                logging.debug ('###### - EVERYTHING OK, WE CAN PROCEED')
+                procfiles = procfiles + 1
+                ### Files landing here need to be updated
+                updateFile(thisfile,sha1offile,crcoffile,mdoffile)
+        else:
+            ### Files landing here need to be removed        
+            deleteHashFromDB (thisfile)
+    logging.info ('###### - FINISHED FILE RENAMING PROCESS - TOTAL FILES PROCESSED '+str(procfiles))
+
+
+if dbRename:
+    ### Get all games from DB and rename filenames
+    renameFiles()
+    scrapeRoms(CURRSSID)
+    sys.exit(0)
+
 
 if cleanSystem !='':
     ### CLEAN SYSTEM, THIS PROCEDURE DELETES ALL DB RECORDS FOR FILES FOUND IN GAMELIST FOR A GIVEN SYSTEM

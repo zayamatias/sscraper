@@ -33,7 +33,7 @@ By default, running the script 'python sscraper.py' will:
 - it will create a missing csv file (pipe delimited), with a list of roms that could not be found in screenscraper.fr
 - If your daily quota is done, it will switch to anonymous mode and if this mode is disabled by screenscraper.fr then it will pause until the next day quota is reset
 
-## Missing roms
+## Missing Mode
 
 After the first run, you can re-execute the script with the `--missing filename.csv` parameter.
 

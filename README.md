@@ -7,6 +7,8 @@ The local DB is used so following scrapes are done first in the DB, speeding up 
 
 This script will probably run only on linux machines, sorry. Feel free to adapt it for other OS's.
 
+The script will not ouput anything to the console (except if there is an unhandled exception), everything will be output to the sv2log.txt file. This is done so you can run this remotely and close the connection to your box `nohup python sscraper.py &` 
+
 Look at the imports in the script and make sure you install all needed modules in your environment
 
 Also, some image/video libraries are needed, cannot remember which right now, will try to update them when I remember.

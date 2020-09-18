@@ -13,7 +13,7 @@ Look at the imports in the script and make sure you install all needed modules i
 
 Also, some image/video libraries are needed, cannot remember which right now, will try to update them when I remember.
 
-**The script will run on a single thread, so it will not be super fast, parsing 70000 roms with an empty local DB may take up to 3 days
+**The script will run on a single thread, so it will not be super fast, parsing 70000 roms with an empty local DB may take up to 3 days or more depending on circumstances**
 
 ## Default Behavior
 

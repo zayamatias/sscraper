@@ -30,7 +30,7 @@ By default, running the script 'python sscraper.py' will:
 - It will download bezels and create the configuration files (tested only for RetroPie)
 - It will create symlinks for duplicate images and videos in order to save space
 - it will create a missing csv file (pipe delimited), with a list of roms that could not be found in screenscraper.fr
-- If your daily quota is done, it will pause until the next day quota is reset
+- If your daily quota is done, it will switch to anonymous mode and if this mode is disabled by screenscraper.fr then it will pause until the next day quota is reset
 
 ## Missing roms
 

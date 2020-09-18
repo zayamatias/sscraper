@@ -1929,7 +1929,7 @@ def findMissing():
             logging.info('###### IS THIS A NEW MODE '+str(newmode))
             if newGameId == 0 and not newmode:
                 updateGameID (row[1],sha,'0')
-                newline = row[0]+','+row[1]+','+sha+','+row[3]+','+row[4]+','+row[5]+',FORCED_ID'
+                newline = row[0]+'|'+row[1]+'|'+sha+'|'+row[3]+'|'+row[4]+'|'+row[5]+'|FORCED_ID'
                 system=row[0]
                 logging.info ('###### DOING RESEARCH FOR '+row[1]+' IN SYSTEM '+str(system))
                 if str(system) != '75':
@@ -1941,7 +1941,7 @@ def findMissing():
                 else:
                     filename=row[1][row[1].rfind('/')+1:row[1].rfind('.')]
                     filename = getArcadeName(filename)
-                    newline = newline +','+filename
+                    newline = newline +'|'+filename
                     searchSystems = arcadeSystems
                 logging.info ('###### WILL SEARCH IN '+str(searchSystems))
                 subOne = (re.sub('[V|v]+\d+.\d+','',filename)).strip()
@@ -2005,8 +2005,8 @@ def findMissing():
                                         keepon = False
                                         continue
                                     for gameName in game['noms']:
-                                        newline = newline + ',' + gameName['text']
-                                    newline = newline + ',' + thisGameID
+                                        newline = newline + '|' + gameName['text']
+                                    newline = newline + '|' + thisGameID
                                     position = position+1
                             else:
                                 if str(returnValue['jeux'][0]) != '{}':

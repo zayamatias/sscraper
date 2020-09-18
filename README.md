@@ -27,7 +27,7 @@ After the first run, you can re-execute the script with the `--missing filename.
 
 Each line in this file looks something like:
 
-76|/home/pi/RetroPie/roms/zxspectrum/Fred_(1984)(Investronica)(ES).zip|19b2100571c72e0e9e593723e7a2de4674e7ba84|d8cc135d5b793bf39819597fbb8ed3f2|7C749EFC|13
+>76|/home/pi/RetroPie/roms/zxspectrum/Fred_(1984)(Investronica)(ES).zip|19b2100571c72e0e9e593723e7a2de4674e7ba84|d8cc135d5b793bf39819597fbb8ed3f2|7C749EFC|13
 
 Where columns are:
 

@@ -3,7 +3,6 @@
 
 import csv
 import ast
-import config
 import urllib2
 import urllib
 import json
@@ -31,8 +30,15 @@ from pymediainfo import MediaInfo
 import argparse
 import re
 import cookielib
+import config
+
 
 ### Parse arguments first
+### Arguments are :
+### --missing: parse missing file and try to scrape based on name, also parses extra missing info if file has it
+### --update: refresh information from site, redownloads images
+### --clean: removes all information from a system in the local DB, needs to have system specified
+### --rename: will look into the game name as downloaded from the site and rename the file accordingly
 
 parser = argparse.ArgumentParser(description='ROM scraper, get information of your roms from screenscraper.fr')
 parser.add_argument('--missing', help='Try to find missing ganes from the missing file',nargs=1)
@@ -73,18 +79,27 @@ try:
 except Exception as e:
     logging.debug('error al crear log '+str(e))
 
-sysconfig = "/etc/emulationstation/es_systems.cfg"
-# sysconfig ="systems.cfg"
-tmpdir = '/home/pi/'
-mydb = mysql.connector.connect(
-  host="192.168.8.101",
-  user="romhash",
-  passwd="emulation",
-  database="romhashes"
-)
+sysconfig = config.sysconfig
+
+tmpdir = config.tmpdir
+
+try:
+    mydb = mysql.connector.connect(
+    host=config.dbhost,
+    user=config.dbuser,
+    passwd=config.dbpasswd,
+    database=config.database
+    )
+except Exception as e:
+    logging.error ('###### CANNOT CONNECT TO DATABASE '+config.dbhost+'/'+config.database+' Error:'+str(e))
+    logging.error ('###### PLEASE MAKE SURE YOU HAVE A DATABASE SERVER THAT MATCHES YOUR CONFIGURATION')
+    print (str(e))
+    sys.exit()
 
 fixedURL = "https://www.screenscraper.fr/api"
+
 testAPI = "ssuserInfos"
+
 fixParams = {'devid': config.devid,
              'devpassword': config.devpassword,
              'softname': config.softname,
@@ -92,26 +107,24 @@ fixParams = {'devid': config.devid,
              'sspassword': config.sspass,
              'output': 'json'}
 cachedir = '/home/pi/hashes/'
+
 CURRSSID = 0
+
 lastfile = ''
+
 lastresult = ''
+
 ### INSERT THE EXTENSIONS YOU DO NOT WANT TO HAVE ZIPPED IN THE LIST BELOW
-donotcompress = ['.zip','.lha','.iso','.cue','.bin','.chd','.pbp','.rp','.sh','.mgw','.rvz']
+donotcompress = config.donotcompress
 ### OUTPUT FILE WITH THE MISSING FILES CREATED IN THE FIRST ROUND
-missingfile='/home/pi/missing.csv'
+missingfile= config.missingfile
 ### OUTPUT FILE WITH THE MISSING FILES CREATED IN THE SECOND ROUNF (WHEN --missing PARAMETER IS PASSED)
-newmissingfile='/home/pi/newmissing.csv'
+newmissingfile= config.newmissingfile
 
-BIOSDIR = '/home/pi/RetroPie/BIOS/MAME'
-UNKDIR = '/home/pi/RetroPie/UNKNOWN'
+BIOSDIR = config.BIOSDIR
+UNKDIR = config.UNKDIR
+
 cookies = cookielib.LWPCookieJar()
-handlers = [
-    urllib2.HTTPHandler(),
-    urllib2.HTTPSHandler(),
-    urllib2.HTTPCookieProcessor(cookies)
-    ]
-opener = urllib2.build_opener(*handlers)
-
 
 class Game:
     ### THIS IS THE GAME CLASS, IT WILL HOLD INFORMATION OF EACH SCRAPED GAME
@@ -176,12 +189,9 @@ class Game:
             return gameNode
         else:
             return None
+
 def callAPIURL(URL):
-    #req = urllib2.Request('https://www.screenscraper.fr')
-    #res = opener.open(req)
-    #cookiestring = ''
-    #for cookie in cookies:
-     #   cookiestring  = cookiestring + cookie.name+'='+cookie.value
+    #### ACTUAL CALL TO THE API
     request = urllib2.Request(URL)
     response = urllib2.urlopen(request,timeout=20).read()
     return response
@@ -942,7 +952,7 @@ def insertHashInDB(file,hashType,hash):
     sql = "INSERT INTO filehashes (file, "+hashType.upper()+") VALUES (%s, %s)"
     val =(str(file),str(hash))
     try:
-        mycursor.executemany(sql, val)
+        mycursor.execute(sql, val)
         mydb.commit()
         logging.debug('###### INSERTED '+hashType.upper()+' '+str(hash)+' FOR FILE '+file)
     except Exception as e:
@@ -1868,11 +1878,6 @@ def findMissing():
     ### GET ALL SYSTEMS, THIS IS DONE TO HAVE A LIST OF ARCADE RELATED SYSTEMS
     systems = getAllSystems(CURRSSID)
     arcadeSystems = [75]
-    '''
-    for system in systems:
-        if 'ARCADE' in system['type'].upper():
-            arcadeSystems.append(system['id'])
-    '''
     ### read missing file and try to get game by name
     matchPercent = 95
     with open(missing) as csv_file:
@@ -2085,7 +2090,7 @@ def cleanGameList(path):
 
 
 def multiDisk(filename):
-    checkreg = '\([D|d][I|i][S|s][K\k].*\)|\([S|s][I|i][D|d][E|e].*\)|\([D|d][I|i][S|s][C|c].*\)|\([T|t][A|a][P|p][E|e].*\)|\([F|f][I|i][L|l][E|e].*\)'
+    checkreg = '\([P|p][A|a][R|r][T|t][^\)]*\)|\([F|f][I|i][L|l][E\e][^\)]*\)|\([D|d][I|i][S|s][K\k][^\)]*\)|\([S|s][I|i][D|d][E|e][^\)]*\)|\([D|d][I|i][S|s][C|c][^\)]*\)|\([T|t][A|a][P|p][E|e][^\)]*\)|\([F|f][I|i][L|l][E|e][^\)]*\)'
     matchs = re.search(checkreg,filename)
     return matchs
 
@@ -2093,6 +2098,9 @@ def multiVersion(filename):
     checkreg = '[V|v]\d*\.\w*'
     matchs = re.search(checkreg,filename)
     return matchs
+
+def specialLabel(filename):
+    checkreg = '^\([D|d][I|i][S|s][K\k][^\)]*\)|\([S|s][I|i][D|d][E|e][^\)]*\)|\([D|d][I|i][S|s][C|c][^\)]*\)|\([T|t][A|a][P|p][E|e][^\)]*\)|\([F|f][I|i][L|l][E|e][^\)]*\)'
 
 
 def cleanSys(system):
@@ -2143,8 +2151,8 @@ def updateFile(path,localSHA,localCRC,localMD):
             destFile = filepath+thisGame['jeu']['nom']
         if vmatchs:
             destFile = (destfile+' ('+vmatchs.group(0).replace('_',' ')+')'+filext).encode('ascii', 'ignore')
-        else
-            destfile = (destfile.+filext).encode('ascii', 'ignore')
+        else:
+            destfile = (destfile+filext).encode('ascii', 'ignore')
         if destFile != path:
             res = updateDBFile(path,destFile)
             if res == 0:

@@ -13,7 +13,7 @@ Also, some image/video libraries are needed, cannot remember which right now, wi
 
 **The script will run on a single thread, so it will not be super fast, parsing 70000 roms with an empty local DB may take up to 3 days
 
-##Default Behavior
+## Default Behavior
 
 By default, running the script 'python sscraper.py' will:
 
@@ -30,7 +30,7 @@ By default, running the script 'python sscraper.py' will:
 - it will create a missing csv file (pipe delimited), with a list of roms that could not be found in screenscraper.fr
 - If your daily quota is done, it will pause until the next day quota is reset
 
-##Missing roms
+## Missing roms
 
 After the first run, you can re-execute the script with the `--missing filename.csv` parameter.
 

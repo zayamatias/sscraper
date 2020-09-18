@@ -62,3 +62,19 @@ Format is similar to the original missing file, but this time it will add a 'FOR
 You will have the opportunity to manually update this file to replace the FORCE_ID field with the field you consider the correct one. You can also replace the FORCE_ID by DELETE to delete the file, UNKNOWN to move it to the unknown directory (see config.py file) or BIOS to move it to the bios directory (again, see config.py file)
 
 If you run the --missing parameter with your modified file, it will update the GAME_ID in the local DB with the ID you replaced in the FORCE_ID field and then re-run a full scan.
+
+## Update Mode
+
+When running the script with the --update switch, it will rerun a full scan but it will no longer get the information as present in the local DB, but it will do a new request to screenscraper.fr and update the localDB, images and videos.
+
+This is useful to run once every so often in order to get any updated information that screenscraper may have.
+
+It will use the GAME_ID found in the DB in order to avoid not finding roms that where updated with the missing file method.
+
+## Clean Mode
+
+The switch '--clean SYSTEM' will force the script to clean the DB for information concenring the system you designate. This has been useful to me during dvelopment when wrong information was stored in the localDB, but it may be of no use for you. Anyway, the option is present
+
+## Rename Mode
+
+The switch '--rename' will fetch all games in the local DB, and try to rename filenames to the actual game name. Usefull if you like to have a neat set of files.

@@ -3,8 +3,15 @@
 Python tool to scrape from screenscraper.fr
 
 This scraper needs a MYSQL database available, you will need to create 2 tables. Please look at the tables.sql file.
+The local DB is used so following scrapes are done first in the DB, speeding up the process and easing the load in screenscraper.fr (and not getting blocked by using up your quota everytime)
 
-This script will probably run on linux machines, sorry. Feel free to adapt it for other OS's.
+This script will probably run only on linux machines, sorry. Feel free to adapt it for other OS's.
+
+Look at the imports in the script and make sure you install all needed modules in your environment
+
+Also, some image/video libraries are needed, cannot remember which right now, will try to update them when I remember.
+
+**The script will run on a single thread, so it will not be super fast, parsing 70000 roms with an empty local DB may take up to 3 days
 
 ##Default Behavior
 
@@ -18,8 +25,10 @@ By default, running the script 'python sscraper.py' will:
 - Use a special tag `<ssname>3DO</ssname>` that will match with the system name in screenscraper.fr
 - It will compress files which extension is not in the configuration file `donotcompress` to gain space
 - It will download video and imamges (will compose the background + 3dBox if both are found)
+- It will download bezels and create the configuration files (tested only for RetroPie)
 - It will create symlinks for duplicate images and videos in order to save space
 - it will create a missing csv file (pipe delimited), with a list of roms that could not be found in screenscraper.fr
+- If your daily quota is done, it will pause until the next day quota is reset
 
 ##Missing roms
 

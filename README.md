@@ -26,7 +26,7 @@ By default, running the script 'python sscraper.py' will:
 - Skip systems that have the `sskip='yes'` attribute set: `<system sskip='yes'>`
 - Use a special tag `<ssname>3DO</ssname>` that will match with the system name in screenscraper.fr
 - It will compress files which extension is not in the configuration file `donotcompress` to gain space
-- It will download video and imamges (will compose the background + 3dBox if both are found)
+- It will download video and images (will compose the background + 3dBox if both are found) and verify their integrity
 - It will download bezels and create the configuration files (tested only for RetroPie)
 - It will create symlinks for duplicate images and videos in order to save space
 - it will create a missing csv file (pipe delimited), with a list of roms that could not be found in screenscraper.fr
@@ -47,7 +47,7 @@ System id in screenscraper | Full path to the file | SHA1 | MD5 | CRC | Size in 
 What will happen:
 
 - Script will read the missing file line by line and try to get the rom_id from screenscraper.fr based on name search
-- If a confident match is found, it will update the Game_ID in the local DB to the Game_ID in screenscraper
+- If a confident match is found, it will update the Game_ID in the local DB to the Game_ID in screenscraper [The closer the filename to the game name in screenscraper, there will be more possibilities to find the proper game]
 - If no confident match is found, all close matches will be added in a newmissing csv file
 - After all lines are done, a full scrape will be launched, grabbing the information for the roms where the Game_ID was found (IT WILL RE RUN A FULL SYSTEM SCAN).
 - For certain specific systems (arcade) since rom names are usually shorter versions, it will go to'http://www.mamedb.com/' and 'http://adb.arcadeitalia.net' to try and get the full name

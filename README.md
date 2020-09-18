@@ -26,6 +26,8 @@ By default, running the script 'python sscraper.py' will:
 - Skip systems that have the `sskip='yes'` attribute set: `<system sskip='yes'>`
 - Use a special tag `<ssname>3DO</ssname>` that will match with the system name in screenscraper.fr
 - It will compress files which extension is not in the configuration file `donotcompress` to gain space
+- It will store the SHA1, MD5 & CRC of files in the DB, so it will assing the original hashes to the compressed file
+- It will look inside compressed files in case there is no match in screenscraper (and check again with hashes for extracted file)
 - It will delete and rebuild a new gamelist.xml file, so any addition you have done to this fie manually will be deleted.
 - It will add the (disk x) or (disc X) or (side x) or (tape x) information found in the filename to the game name.
 - It will download video and images (will compose the background + 3dBox if both are found) and verify their integrity

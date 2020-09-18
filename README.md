@@ -21,10 +21,8 @@ If you have any questions, you can always contact me in twitter:[8bitzaya](https
 
 By default, running the script 'python sscraper.py' will:
 
-- Load the systems configuartion (XML) file
-  Update the location of your file in the config.py file.
-- Parse files of the defined extensions for each system 
-  `<extension>.cue .CUE .chd .CHD</extension>`
+- Load the systems configuartion (XML) file - Make sure to update the location of your file in the config.py file.
+- Parse files of the defined extensions for each system `<extension>.cue .CUE .chd .CHD</extension>`
 - Skip systems that have the `sskip='yes'` attribute set: `<system sskip='yes'>`
 - Use a special tag `<ssname>3DO</ssname>` that will match with the system name in screenscraper.fr
 - It will compress files which extension is not in the configuration file `donotcompress` to gain space

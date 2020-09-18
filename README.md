@@ -55,3 +55,10 @@ What will happen:
 
 The newmissing file structure is like this:
 
+>113|/home/pi/RetroPie/roms/msx/Game_Over_II_(1988)(Dinamic_Software)(ES)(Side_A)[re-release_of_Phantis][RUN_CAS-_].zip|0f3e53ef7143a3fa9446ccce7678044bdbbac77d|f5b8e7b4a52fec3ab8235d44210864fa|DF901375	27|FORCED_ID|Game Land|95366|Game Master|95367|Game Master 2|95368|Game World - 126 Games|95372|Golf Game|95428|Chess Game The|96955|Pinball Game|97106|Msx Shogi Game|109059|Game Over|176884|Game Over|176884|Phantis - Game Over 2|185418|Game Over|176884	Phantis - Game Over 2|185418
+
+Format is similar to the original missing file, but this time it will add a 'FORCE_ID' column and then a 'Game Name' column and 'Game ID' column per match returned by screenscraper.fr.
+
+You will have the opportunity to manually update this file to replace the FORCE_ID field with the field you consider the correct one. You can also replace the FORCE_ID by DELETE to delete the file, UNKNOWN to move it to the unknown directory (see config.py file) or BIOS to move it to the bios directory (again, see config.py file)
+
+If you run the --missing parameter with your modified file, it will update the GAME_ID in the local DB with the ID you replaced in the FORCE_ID field and then re-run a full scan.

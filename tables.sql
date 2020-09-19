@@ -14,3 +14,10 @@ CREATE TABLE 'hashes' (
   'created_at' timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
   PRIMARY KEY ('hash')
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+
+CREATE TABLE `apicache` (
+  `apiname` varchar(100) NOT NULL,
+  `parameters` varchar(255) NOT NULL,
+  `result` longtext DEFAULT NULL,
+  KEY `apicache_apiname_IDX` (`apiname`,`parameters`) USING BTREE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Holds a cache of V2 API CALLS'

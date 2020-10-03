@@ -131,6 +131,10 @@ UNKDIR = config.UNKDIR
 
 cookies = cookielib.LWPCookieJar()
 
+arcadeSystems = ('75','142','56','151','6','7','8','196','35','47','49','54','55','56','68','69','112','147','148','149','150','151','152','153','154','155','156','157','158','159','160',
+                 '161','162','163','164','165','166','167','168','169','170','173','174','175','176','177','178','179','180','181','182','183','184','185','186','187','188','189','190','191',
+                 '192','193','194','195','196','209')
+
 class Game:
     ### THIS IS THE GAME CLASS, IT WILL HOLD INFORMATION OF EACH SCRAPED GAME
     def __init__(self, json):
@@ -146,7 +150,7 @@ class Game:
             logging.debug ('###### REQUESTED NOT TO ZIP EXTENSION')
             zippedFile = file
         self.path = zippedFile
-        self.name = json['jeu']['nom']
+        self.name = json['jeu']['nom'].decode('utf8').encode('ascii','ignore')
         mdisk = multiDisk(self.path)
         mvers = multiVersion(self.path)
         if mdisk:
@@ -1150,7 +1154,7 @@ def crc(fileName):
 
 def escapeFileName(file):
     ### JUST MACE SURE THAT WE HAVE A NORMALIZED FILENAME
-    return file.decode('utf-8').encode('ascii','ignore')
+    return file.decode('utf8').encode('ascii','ignore')
 
 
 def getNamesInZip(zFile):
@@ -1646,8 +1650,7 @@ def getGameInfo(CURRSSID, pathtofile, file, mymd5, mysha1, mycrc, sysid):
     response = None
     ### FIRST, TRY TO GET THE ANSWER FRO THE DB, THIS IS DONE SO WE DO NOT CALL THE SCRAPER EVRYTIME IF WE HAVE ALREADY FETCHED INFORMATION FOR THIS PARTICULAR SHA
     response = locateShainDB(mysha1)
-    
-    logging.info ('######## '+str(response))
+    ###logging.info ('######## '+str(response))
     ### DID WE SOMEHOW GOT AN EMPTY RESPONSE?
     if response !='':
         ### WE DID GET A RESPONSE
@@ -1947,6 +1950,24 @@ def replace_roman_numerals(s):
     ret = ret.replace(' XV ',' 15 ')
     return ret
 
+### CHK - ORIG
+def fuzzyMatch (a,b):
+    aparts = a.split(' ')
+    bparts = b.split(' ')
+    mparts = 0
+    for bpart in bparts:
+        for apart in aparts:
+	    if apart == bpart:
+                mparts = mparts + 1
+                continue
+    if mparts >= len(bparts) and mparts >= len(aparts):
+        logging.debug ('###### WHOLE MATCH FOUND '+a+' == '+b+' PARTS '+str(mparts))
+    else:
+        logging.debug ('###### FOUND '+str(mparts)+' OF '+str(len(bparts)))
+    return False
+
+
+
 def gameNameMatches(orig,chkname):
     ## Convert non ascii codes to normal codes
     for chk in chkname['noms']:
@@ -1955,6 +1976,12 @@ def gameNameMatches(orig,chkname):
         ### 'NN TODO
         logging.debug ('####### NAME GRABBED - NAME INFERRED')
         if chkNamesMatch(chk.upper(),replace_roman_numerals(orig.upper())):
+            logging.info ('###### NAME MATCHES')
+            return True
+        if chkNamesMatch(chk.upper().replace('!',''),orig.upper()):
+            logging.info ('###### NAME MATCHES')
+            return True
+        if chkNamesMatch(chk.upper().replace('.',''),orig.upper()):
             logging.info ('###### NAME MATCHES')
             return True
         if chkNamesMatch(chk.upper(),orig.upper()):
@@ -1996,9 +2023,15 @@ def gameNameMatches(orig,chkname):
         if chkNamesMatch(chk.upper(),orig.replace(':',' - ').upper()):
             logging.info ('###### NAME MATCHES')
             return True
+        if chkNamesMatch(chk.upper(),orig.replace(':',' -').upper()):
+            logging.info ('###### NAME MATCHES')
+            return True
         if chkNamesMatch(chk.upper(),orig.upper()+' THE'):
             logging.info ('###### NAME MATCHES')
             return True
+        if fuzzyMatch(chk,orig):
+            logging.info ('###### NAME MATCHES')
+            return True          
         matches = re.search('\w*\d',orig)
         if matches:
             splitnum = matches.group(0)
@@ -2069,11 +2102,21 @@ def deleteFile (file):
     except Exception as e:
         logging.error ('##### COULD NOT DELETE FILE '+file)
 
+def isSystemOk(jsonsys,gamesys):
+    if jsonsys == gamesys:
+        logging.debug ('###### SYSTEMS ARE IDENTICAL')
+        return True
+    msxsystems = ('113','118','116','117')
+    if jsonsys in msxsystems and gamesys in msxsystems:
+        return True
+    if jsonsys in arcadeSystems and gamesys in arcadeSystems:
+        return True
+    return False
+
 def findMissing():
     ### GET ALL SYSTEMS, THIS IS DONE TO HAVE A LIST OF ARCADE RELATED SYSTEMS
     systems = getAllSystems(CURRSSID)
-    arcadeSystems = [75,142,56]
-    ### read missing file and try to get game by name
+     ### read missing file and try to get game by name
     matchPercent = 95
     if not os.path.isfile(missing):
         logging.error('####### COULD NOT FIND FILE '+str(missing)+' STOPPING EXECUTION')
@@ -2130,7 +2173,7 @@ def findMissing():
                 newline = row[0]+'|'+row[1]+'|'+sha+'|'+row[3]+'|'+row[4]+'|'+row[5]+'|FORCED_ID'
                 system=row[0]
                 logging.info ('###### DOING RESEARCH FOR '+row[1]+' IN SYSTEM '+str(system))
-                if int(system) not in arcadeSystems:
+                if str(system) not in arcadeSystems:
                     searchSystems=[system]
                     filename=(row[1][row[1].rfind('/')+1:row[1].rfind('.')]).replace('_',' ')
                     ### GBA Exception
@@ -2139,6 +2182,8 @@ def findMissing():
                 else:
                     filename=row[1][row[1].rfind('/')+1:row[1].rfind('.')]
                     filename = getArcadeName(filename)
+                    if filename == '':
+                        filename = 'UNKNOWN'
                     newline = newline +'|'+filename
                     searchSystems = system
                 logging.info ('###### WILL SEARCH IN '+str(searchSystems))
@@ -2153,15 +2198,17 @@ def findMissing():
                     full = True
                     returnValue = {}
                     ### TODO: VERIFY SPLITS THINGS AND FINAL NAMES
-                    tries = 2
+                    tries = 3
                     while tries > 0 and not found:
                         ## Try with whole name first, if not with partial
                         if tries == 1:
-                            gameSearch = myGameName.replace(' - ',' ').replace(':','').split(' ')[0].replace(',','')
+                            gameSearch = myGameName.replace(' - ',' ').replace(':','').split(' ')[0]
                         else:
-                            gameSearch = myGameName.replace(' - ',' ').replace(':','').replace(',','')
+                            gameSearch = myGameName
+                        if tries == 2:
+                            gameSearch = replace_roman_numerals(gameSearch)
                         logging.debug('####### LENGTH OF GAMESEARCH IS '+str(len(gameSearch))+'='+str(gameSearch))
-                        if len(gameSearch)<4:
+                        if len(gameSearch)<4 and tries == 1:
                             try:
                                 gameSearch = gameSearch+' '+myGameName.split(' ')[1] #SI son menos de 3 caracteres anado segunda palabra
                             except:
@@ -2200,29 +2247,39 @@ def findMissing():
                                 for game in returnValue['jeux']:
                                     thisGameID = returnValue['jeux'][position]['id']
                                     if gameNameMatches(myGameName,game):
-                                        if game['systeme']['id'] == str(system):
+                                        if isSystemOk(game['systeme']['id'],str(system)):
                                             updateGameID (row[1],sha,thisGameID)
                                             found = True
                                             continue
-                                    for gameName in game['noms']:
-                                        if game['systeme']['id'] == str(system):
-                                            newline = newline + '|' + gameName['text']
-                                            newline = newline + '|' + thisGameID
-                                            position = position+1
+                                        else:
+                                            logging.debug ('###### FOUND MATCH NOT OF SAME SYSTEM')
+                                    if not found:
+                                    	for gameName in game['noms']:
+                                            if isSystemOk(game['systeme']['id'],str(system)):
+                                                newline = newline + '|' + gameName['text']
+                                                newline = newline + '|' + thisGameID
+                                                position = position+1
+                                            else:
+                                                logging.debug ('###### RETURNED VALUE NOT OF SAME SYSTEM')
+ 
                             else:
                                 if str(returnValue['jeux'][0]) != '{}':
                                     game = returnValue['jeux'][0]
                                     thisGameID = returnValue['jeux'][0]['id']
                                     if gameNameMatches(myGameName,game):
-                                        if game['systeme']['id'] == str(system):
+                                        if isSystemOk(game['systeme']['id'],str(system)):
                                             updateGameID (row[1],sha,thisGameID)
                                             found = True
                                             logging.info ('###### FOUND MISSING INFO FOR '+filename+' SHA '+sha)
+                                        else:
+                                            logging.debug ('###### MATCH NOT OF SAME SYSTEM')
                                     else:
                                         for gameName in game['noms']:
-                                            if game['systeme']['id'] == str(system):
+                                            if isSystemOk(game['systeme']['id'],str(system)):
                                                 newline = newline + '|' + gameName['text']
                                                 newline = newline + '|' + thisGameID
+                                            else:
+                                                logging.debug ('###### RETURNED VALUE NOT OF SAME SYSTEM')
                         tries = tries - 1
                     if not found:
                         logging.info ('###### COULD NOT FIND MISSING INFO FOR '+filename)
@@ -2412,6 +2469,7 @@ if missing !='':
     ### THIS PROCEDURE OPENS A CSV FILE CONTAINING SYSTEM_ID,FILENAME,SHA,MD5,CRC
     ### IT WILL THEN TRY TO MATCH FILENAMES WITH GAME NAMES AND ADD GAME_ID IF FOUND TO DB
     findMissing()
+    logging.info ('###### FINSHED LOOKING FOR MISSING GAMES')
     ##sys.exit(0)
     scrapeRoms(CURRSSID)
 

@@ -153,6 +153,9 @@ class Game:
         self.name = json['jeu']['nom'].decode('utf8').encode('ascii','ignore')
         mdisk = multiDisk(self.path)
         mvers = multiVersion(self.path)
+        mctry = multiCountry(self.path)
+        if mctry:
+            self.name = self.name+' '+mctry.group(0)
         if mdisk:
             self.name = self.name+' '+mdisk.group(0)
         if mvers:
@@ -447,45 +450,51 @@ def getPlayers(json):
 
 def generateImage(img1,img2,destfile):
     ### THIS FUNCTION COMBINES TWO IMAGES INTO A SINGLE ONE
-    imgbase = Image.new('RGBA', (640, 530), (255, 0, 0, 0))
-    imgb = Image.new('RGBA', (150, 150), (255, 0, 0, 0))
-    if img1!='':
-        try:
-            imga = Image.open(img1).convert('RGBA')
-            imga = imga.resize((640,480), Image.ANTIALIAS)
-        except Exception as e:
-            logging.error ('Cannot resize first image '+str(e))
-            imga = Image.new('RGBA', (640, 480), (255, 0, 0, 0))
+    if os.path.isfile(destfile):
+        logging.debug ('###### FINAL FILE ALREADY EXISTS - NO NEED TO DO ANYTHING')
+        return True
     else:
-        imga = Image.new('RGBA', (640, 480), (255, 0, 0, 0))
-    if img2!='':
-        try:
-            imgb = Image.open(img2).convert('RGBA')
-            imgb = imgb.resize((200,300), Image.ANTIALIAS)
-        except Exception as e:
-            logging.error ('Cannot resize second image '+str(e))
-            imgb = Image.new('RGBA', (110, 150), (255, 0, 0, 0))
-    else:
+        imgbase = Image.new('RGBA', (640, 530), (255, 0, 0, 0))
         imgb = Image.new('RGBA', (150, 150), (255, 0, 0, 0))
-    try:
-        imgbase.paste(imga,(0,0),imga)
-        imgbase.paste(imgb,(0,230),imgb)
-        imgbase.save(destfile, format="png")
-    except Exception as e:
-        logging.error ('Cannot merge images '+str(e))
+        if img1!='':
+            try:
+                imga = Image.open(img1).convert('RGBA')
+                imga = imga.resize((640,480), Image.ANTIALIAS)
+            except Exception as e:
+                logging.error ('###### CANNOT RESIZE FIRST IMAGE '+str(e))
+                imga = Image.new('RGBA', (640, 480), (255, 0, 0, 0))
+        else:
+            imga = Image.new('RGBA', (640, 480), (255, 0, 0, 0))
+        if img2!='':
+            try:
+                imgb = Image.open(img2).convert('RGBA')
+                imgb = imgb.resize((200,300), Image.ANTIALIAS)
+            except Exception as e:
+                logging.error ('###### CANNOT RESIZE SECOND IMAGE '+str(e))
+                imgb = Image.new('RGBA', (110, 150), (255, 0, 0, 0))
+        else:
+            imgb = Image.new('RGBA', (150, 150), (255, 0, 0, 0))
+        try:
+            imgbase.paste(imga,(0,0),imga)
+            imgbase.paste(imgb,(0,230),imgb)
+            imgbase.save(destfile, format="png")
+            logging.debug ('###### SAVED COMPOSITE IMAGE '+destfile)
+        except Exception as e:
+            logging.error ('###### CANNOT MERGE FILE '+str(e))
+            return False
     if img1 !='':
         try:
             if os.path.isfile(img1):
                 os.remove(img1)
         except:
-            logging.error ('Cannot remove '+str(img1))
+            logging.error ('###### CANNOT REMOVE 1ST IMAGE '+str(img1))
     if img2 !='':
         try:
             if os.path.isfile(img2):
                 os.remove(img2)
         except:
-            logging.error ('Cannot remove '+str(img2))
-
+            logging.error ('###### CANNOT REMOVE 2ND IMAGE '+str(img2))
+    return True
 def getDesc(json):
     # THIS FUNCTION GETS THE SYNOPSIS OF A GAME, IT TRIES ENGLISH FIRST, THEN FRENCH, AND THEN WHATEVER IS AVAILABLE
     description = ''
@@ -521,7 +530,6 @@ def getDate(json):
                         reldate = dates
 
     return reldate
-
 
 def writeXML(rootElement, filename):
     ### THIS FUNCTION WRITES AN XML FILE
@@ -685,7 +693,8 @@ def grabVideo (URL,destfile,tout):
         result = 1
         retries = 0
         while (result !=0) and (retries <10):
-            logging.debug ('###### ACTUALLY DOWNLOADING VIDEO ')
+            logging.debug ('###### ACTUALLY DOWNLOADING VIDEO '+str(URL))
+            logging.debug ('###### COMMAND: wget --retry-connrefused --waitretry=1 --read-timeout=20 --timeout=15 --tries=5 -c -q '+str(URL)+' -O '+str(destfile))
             result = subprocess.call(['wget','--retry-connrefused','--waitretry=1','--read-timeout=20','--timeout=15','--tries=5','-c','-q', URL, '-O', destfile])
             logging.debug ('###### VIDEO DOWNLOAD RESULT '+str(result))
             logging.debug ('###### FILE EXISTS '+str(os.path.isfile(destfile)))
@@ -693,10 +702,11 @@ def grabVideo (URL,destfile,tout):
                 if os.path.isfile(destffile):
                     os.remove(destfile)
                 logging.error ('###### DOWNLOAD IS TOO SMALL')
-                if 'clone.' in URL:
+                if 'clone.' in URL and 'screenscraper' in URL:
                     URL = URL.replace ('clone.','www.')
                 else:
-                    URL = URL.replace ('www.','clone.')
+                    if "screenscraper" in URL:
+                        URL = URL.replace ('www.','clone.')
                 result = -1
             retries = retries + 1
         logging.debug ('###### RESULT OF DOWNLOAD '+str(result))
@@ -736,7 +746,7 @@ def validateVideo(videofile):
     try:
         fileInfo = MediaInfo.parse(videofile)
         for track in fileInfo.tracks:
-            if track.track_type == "Video":
+            if track.track_type.upper() == "VIDEO":
                 logging.debug ('###### IT IS A PROPER VIDEO')
                 return True
         logging.debug('###### COULD NOT FIND ANY VIDEO TRACKS IN THE FILE')
@@ -755,12 +765,13 @@ def grabMedia(URL,destfile,tout):
                 if os.path.isfile(destfile):
                     logging.debug('###### COULD NOT VALIDATE '+destfile+' SO I REMOVE IT')
                     os.remove(destfile)
-                if 'clone.' in URL:
+                if 'clone.' in URL and 'screenscraper' in URL:
                     logging.debug('###### .CLONE IS NOT WORKING LET\'S TRY WWW.')
                     URL = URL.replace ('clone.','www.')
                 else:
-                    logging.debug('###### .WWW IS NOT WORKING, LET\'S TRY CLONE.')
-                    URL = URL.replace ('www.','clone.')
+                    if 'screenscraper' in URL:
+                        logging.debug('###### .WWW IS NOT WORKING, LET\'S TRY CLONE.')
+                        URL = URL.replace ('www.','clone.')
                 logging.error ('###### DOWNLOAD IS CORRUPTED ON RETRY '+str(retries+1)+' URL '+str(URL))
                 result = -1
             retries = retries + 1
@@ -783,13 +794,19 @@ def grabMedia(URL,destfile,tout):
 def getScreenshot(medialist,num):
     if 'media_screenshot' in medialist.keys():
         URL = medialist['media_screenshot']
-        mediaURL = URL.replace('clone.', 'www.')
-        #mediaURL = URL
-        mediaPos = mediaURL.find('mediaformat=')+12
-        mediaFormat = mediaURL[mediaPos:mediaPos+3]
-        if mediaFormat == '':
-            mediaFormat = 'png'
-        return grabMedia(mediaURL,tmpdir+'image'+str(num)+'.'+mediaFormat,60)
+        if 'screenscraper' in URL:
+            mediaURL = URL.replace('clone.', 'www.')
+            #mediaURL = URL
+            mediaPos = mediaURL.find('mediaformat=')+12
+            mediaFormat = mediaURL[mediaPos:mediaPos+3]
+            if mediaFormat == '':
+                mediaFormat = '.png'
+            return grabMedia(mediaURL,tmpdir+'image'+str(num)+'.'+mediaFormat,60)
+        ##### URL Is not in screenscraper
+        else:
+            mediaFormat = URL[URL.rindex('.')+1:]
+            mediaURL = URL
+            return grabMedia(mediaURL,tmpdir+'image'+str(num)+'.'+mediaFormat,60)
     else:
          return ''
 
@@ -800,12 +817,14 @@ def getBoxURL (list):
     for key,value in list.iteritems():
         if not ('crc' in key or 'sha1' in key or 'md5' in key):
             if '_eu' in key:
-                URL = value
-                found = True
+                if value != None and value !='' and not found:
+                    URL = value
+                    found = True
             else:
                 if not found:
-                   URL = value
-                   found = True
+                    if value != None and value !='':
+                        URL = value
+                        found = True
     return URL
 
 def getBezelURL (list):
@@ -814,12 +833,14 @@ def getBezelURL (list):
     for key,value in list.iteritems():
         if not ('crc' in key or 'sha1' in key or 'md5' in key):
             if '_eu' in key:
-                URL = value
-                found = True
+                if value != None and value !='' and not found:
+                    URL = value
+                    found = True
             else:
                 if not found:
-                   URL = value
-                   found = True
+                    if value != None and value !='':
+                        URL = value
+                        found = True
     return URL
 
 
@@ -834,14 +855,19 @@ def getBezel(medialist,syspath,name):
             URL = getBezelURL(mediabezels['media_bezels4-3'])
         if URL != '':
             logging.debug ('###### THERE IS AN URL FOR BEZEL')
-            mediaURL = URL.replace('clone.', 'www.')
-            mediaPos = mediaURL.find('mediaformat=')+12
-            mediaFormat = mediaURL[mediaPos:mediaPos+3]
+            if 'screenscraper' in URL:
+                mediaURL = URL.replace('clone.', 'www.')
+                mediaPos = mediaURL.find('mediaformat=')+12
+                mediaFormat = mediaURL[mediaPos:mediaPos+3]
+            else:
+                mediaURL = URL
+                mediaFormat = URL[URL.rindex('.')+1:]
             logging.debug ('###### DOWNLOADING BEZEL')
             destpath = syspath.replace('roms','overlays')
             destfile = destpath+'/bezel-'+str(name)+'.'+mediaFormat
             logging.debug ('###### DESTINATION IS '+destfile)
-            grabMedia(mediaURL,destfile,60)
+            if not os.path.isfile(destfile):
+                grabMedia(mediaURL,destfile,60)
             return destfile
         else:
             return ''
@@ -857,12 +883,16 @@ def getBoxArt(medialist,num):
             URL = getBoxURL(mediaboxs['media_boxs3d'])
         if URL =='' and 'media_boxs2d' in mediaboxs.keys():
             URL = getBoxURL(mediaboxs['media_boxs2d'])
-        mediaURL = URL.replace('clone.', 'www.')
-        #mediaURL = URL
-        mediaPos = mediaURL.find('mediaformat=')+12
-        mediaFormat = mediaURL[mediaPos:mediaPos+3]
-        if mediaFormat == '':
-            mediaFormat = 'png'
+        if 'screenscraper' in URL:
+            mediaURL = URL.replace('clone.', 'www.')
+            #mediaURL = URL
+            mediaPos = mediaURL.find('mediaformat=')+12
+            mediaFormat = mediaURL[mediaPos:mediaPos+3]
+            if mediaFormat == '':
+                mediaFormat = 'png'
+        else:
+            mediaURL = URL
+            mediaFormat = URL[URL.rindex('.')+1:]
         logging.debug ('###### DOWNLADING BOX ART')
         return grabMedia(mediaURL,tmpdir+'image'+str(num)+'.'+mediaFormat,60)
     else:
@@ -911,8 +941,10 @@ def processBezels(medialist,destfile,path,hash,zipname):
 def doVideoDownload(medialist,destfile):
     if 'media_video' in medialist.keys():
         URL = medialist['media_video']
-        mediaURL = URL.replace('clone.', 'www.')
-        #mediaURL = URL
+        if 'screenscraper' in URL:
+            mediaURL = URL.replace('clone.', 'www.')
+        else:
+            mediaURL = URL
         return grabVideo(mediaURL,destfile,120)
     else:
          return ''
@@ -947,8 +979,11 @@ def getMedia(medialist, path, file, hash,zipname):
                 if ('API closed for non-registered members' in fileread or 'Faite du tri dans vos fichiers roms et repassez demain !' in fileread) or (os.stat(destfile).st_size < 3000):
                     if os.path.isfile(destfile):
                         os.remove(destfile)
-        logging.debug ('###### GOING TO DOWNLOAD MEDIA')
-        doMediaDownload(medialist,destfile,path,hash)
+                        logging.debug ('###### GOING TO DOWNLOAD MEDIA')
+                        doMediaDownload(medialist,destfile,path,hash)
+        else:
+            logging.debug ('###### GOING TO DOWNLOAD MEDIA')
+            doMediaDownload(medialist,destfile,path,hash)
         logging.debug ('###### GOING TO DOWNLOAD BEZELS')
         processBezels(medialist,destfile,path,hash,zipname)
     return destfile
@@ -2344,9 +2379,23 @@ def multiDisk(filename):
     matchs = re.search(checkreg,filename)
     return matchs
 
+def multiCountry(filename):
+    checkreg = '\([E|e][U|u][R|r][O|o][P|p][E|e][^\)]*\)|\([U|u][S|s][A|a][^\)]*\)|\([J|j][A|a][P|p][A|a][N|n][^\)]*\)|\([E|e][U|u][R|r][A|a][S|s][I|i][A|a][^\)]*\)'
+    matchs = re.search(checkreg,filename)
+    if not matchs:
+        checkreg = '\([S|s][P|p][A|a][I|i][N|n][^\)]*\)|\([F|f][R|r][A|a][N|n][C|c][E|e][^\)]*\)|\([G|g][E|e][R|r][M|m][A|a][N|n][Y|y][^\)]*\)'
+        matchs = re.search(checkreg,filename)
+    if not matchs:
+        checkreg = '\([E|e][N|n][G|g][^\)]*\)|\([R|r][U|u][^\)]*\)|\([E|e][^\)]*\)|\([U|u][^\)]*\)|\([J|j][^\)]*\)|\([S|s][^\)]*\)|\([N|n][^\)]*\)|\([F|f][^\)]*\)|\([J|j][P|p][^\)]*\)|\([N|n][L|l][^\)]*\)|\([K|k][R|r][^\)]*\)|\([E|e][S|s][^\)]*\)'
+        matchs = re.search(checkreg,filename)
+    return matchs
+
 def multiVersion(filename):
     checkreg = '[V|v]\d*\.\w*'
     matchs = re.search(checkreg,filename)
+    if not matchs:
+        checkreg = '\([H|h][A|a][C|c][K|k][^\)]*\)|\([P|p][R|o][T|t][O|o][T|t][Y|y][P|p][E|e][^\)]*\)|\([D|d][E|e][M|m][O|o][^\)]*\)|\([S|s][A|a][M|m][P|p][L|l][E|e][^\)]*\)|\([B|b][E|e][T|t][A|a][^\)]*\)'
+        matchs = re.search(checkreg,filename)
     return matchs
 
 #### NOT USED YET, NEED TO CHECK IF IT MAKES SENSE
@@ -2397,10 +2446,13 @@ def updateFile(path,localSHA,localCRC,localMD):
     else:
         matchs = multiDisk(path)
         vmatchs = multiVersion(path)
-        if matchs:
-            destFile = filepath+thisGame['jeu']['nom']+' '+matchs.group(0).replace('_',' ')
+        cmatchs = multCountry(path)
+        if cmatchs:
+            destFile = filepath+thisGame['jeu']['nom']+' '+cmatchs.group(0).replace('_',' ')
         else:
             destFile = filepath+thisGame['jeu']['nom']
+        if matchs:
+            destFile = (destFile+' ('+matchs.group(0).replace('_',' ')+')')
         if vmatchs:
             destFile = (destFile+' ('+vmatchs.group(0).replace('_',' ')+')'+filext)
         else:

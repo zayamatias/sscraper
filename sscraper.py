@@ -611,12 +611,13 @@ def waitNewDay(runTime):
         anon = not anon
         if 'ssuser'  in response:
             allowed = True
+            VTWOQUOTA = False            
     logging.info ('###### FINISHED WAITING')
     return
 
 def callAPI(URL, API, PARAMS, CURRSSID,Anon=False,Version='',tolog=''):
     global VTWOQUOTA
-    if VTWOQUOTA:
+    if Version=='2' and VTWOQUOTA and not Anon:
         logging.info ('###### DAILY QUOTA HAS BEEN EXCEEDED FOR V2 API - CANNOT CALL IT FOR NOW')
         return 'QUOTA'
     logging.debug ('###### CALLING API WITH EXTRA '+tolog)
@@ -636,7 +637,7 @@ def callAPI(URL, API, PARAMS, CURRSSID,Anon=False,Version='',tolog=''):
     API = Version+'/'+API+".php"
     callURL = URL+API+"?"+url_values
     ### CREATE EMPTY VARIABLES
-    while retries > 0 and not VTWOQUOTA:
+    while retries > 0 and (not VTWOQUOTA or Version !='2' or Anon):
         ### EMPTY RESPONSE JUST IN CASE
         response = None
         logging.debug ('###### CALLING API TRY '+str(11-retries))
@@ -652,7 +653,7 @@ def callAPI(URL, API, PARAMS, CURRSSID,Anon=False,Version='',tolog=''):
                     logging.info ('###### YOUR SCRAPING QUOTA FOR V2 IS OVER FOR TODAY')
                     VTWOQUOTA = True
                 else:
-                    vtwoquotq = False
+                    VTWOQUOTA = False
             if Anon:
                 logging.debug('###### ANON RESPONSE '+str(response))
                 logging.debug('###### CALLING '+str(callURL))
@@ -1575,6 +1576,8 @@ def grabData(system, path, CURRSSID, acceptedExtens):
             CURRSSID = 0
         ### INFORM WE HAVE FINISHED PROCESSING FILE
         logging.info ('---------------------- END FILE ['+procfile+'] ------------------------------')
+        #### REMOVE THE LINE BELOW PLEASE
+        sys.exit(0)
     ### WE HAVE PROCESSED ALL FILES, SO ADD GAMELIST TO THE ROOT ELEMENT OF THE XML
     tree._setroot(gamelist)
     ### SET THE DESTINATION XML FILE
@@ -1878,7 +1881,7 @@ def getGameInfo(CURRSSID, pathtofile, file, mymd5, mysha1, mycrc, sysid):
                 ### NO WE CAN'T
                 return file, 'SKIP'
         ### DID WE GET A PROPER ANSWER? (SSUSER)
-        if ('ssuser' not in response) and ('gameid' not in response):
+        if ('ssuser' not in response) and ('jeu' not in response):
             ### NO WE DID NOT, ADD LOCAL VALUES
             response['file'] = pathtofile + '/' + file.replace("'","\\\'")
             response['localhash'] = mysha1
@@ -1920,7 +1923,7 @@ def getGameInfo(CURRSSID, pathtofile, file, mymd5, mysha1, mycrc, sysid):
     return file,response
 
 
-def scrapeRoms(CURRSSID):
+def scrapeRoms`(CURRSSID):
     ### OPEN SYSTEM CONFIGURATION
     with open(sysconfig, 'r') as xml_file:
         tree = ET.ElementTree()

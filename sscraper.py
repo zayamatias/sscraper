@@ -117,7 +117,8 @@ lastfile = ''
 
 lastresult = ''
 
-vtwoquota = False
+## QUOTA LIMITER FOR V2CALLS
+VTWOQUOTA = False
 
 ### INSERT THE EXTENSIONS YOU DO NOT WANT TO HAVE ZIPPED IN THE LIST BELOW
 donotcompress = config.donotcompress
@@ -204,6 +205,19 @@ class Game:
 
 def updateInDBV2Call(api,params,response):
     ### Update the DB with the call to V2
+    if ('Error 400:' in str(response) or 
+       'Error 401:' in str(response) or 
+       'Error 403:' in str(response) or 
+       'Error 404:' in str(response) or 
+       'Error 423:' in str(response) or 
+       'Error 426:' in str(response) or 
+       'Error 429:' in str(response) or 
+       'Error 430:' in str(response) or 
+       'Error 431:' in str(response) or 
+       'QUOTA' in str(response)):
+        ### TODO VERIFY POSSIBILITY OF PASSING FALSE
+        logging.error ('###### GOT AN ERROR FROM API CALL SO NOT UPDATING V2 DB')
+        return True
     result = ''
     logging.debug ('###### CONNECTING TO DB TO UPDATE CACHED RESULT FOR V2 CALL')
     connected = False
@@ -310,7 +324,10 @@ def callAPIURL(URL):
     #logging.debug ('####### GOT RESPONSE ['+str(response)+'] AFTER CALLING URL')
     if v2 and apiname !='' and response!='':
         updateInDBV2Call(apiname,dbparams,response)
-    return response
+    if 'Error 431:' in response:
+        return 'QUOTA' 
+    else:
+        return response
 
 def isMissing(json,file):
     ### THIS FUNCTION WILL CHECK IF WE CAN CONSIDER FILE AS MISSING FROM THE SCRAPER SITE
@@ -528,7 +545,6 @@ def getDate(json):
                                 reldate = value
                     else:
                         reldate = dates
-
     return reldate
 
 def writeXML(rootElement, filename):
@@ -591,7 +607,7 @@ def waitNewDay(runTime):
         params = None
         params =dict(fixParams)
         params['gameid'] = 1
-        response = callAPI(fixedURL,API,params,0,anon,'','WAIT NEW DAY')
+        response = callAPI(fixedURL,API,params,0,anon,'2','WAIT NEW DAY')
         anon = not anon
         if 'ssuser'  in response:
             allowed = True
@@ -599,11 +615,10 @@ def waitNewDay(runTime):
     return
 
 def callAPI(URL, API, PARAMS, CURRSSID,Anon=False,Version='',tolog=''):
-    '''
-    if vtwoquota:
+    global VTWOQUOTA
+    if VTWOQUOTA:
         logging.info ('###### DAILY QUOTA HAS BEEN EXCEEDED FOR V2 API - CANNOT CALL IT FOR NOW')
         return 'QUOTA'
-    '''
     logging.debug ('###### CALLING API WITH EXTRA '+tolog)
     ### FNCTION THAT ACTUALLY DOES THE CALL TO THE API
     retries = 10
@@ -621,7 +636,7 @@ def callAPI(URL, API, PARAMS, CURRSSID,Anon=False,Version='',tolog=''):
     API = Version+'/'+API+".php"
     callURL = URL+API+"?"+url_values
     ### CREATE EMPTY VARIABLES
-    while retries > 0:
+    while retries > 0 and not VTWOQUOTA:
         ### EMPTY RESPONSE JUST IN CASE
         response = None
         logging.debug ('###### CALLING API TRY '+str(11-retries))
@@ -633,9 +648,11 @@ def callAPI(URL, API, PARAMS, CURRSSID,Anon=False,Version='',tolog=''):
             response = callAPIURL(callURL)
             ### TODO : HANDLE QUOTA FOR V2
             if str(Version)=="2":        
-                if 'Votre quota de scrape est' in response:
+                if 'QUOTA' in response:
                     logging.info ('###### YOUR SCRAPING QUOTA FOR V2 IS OVER FOR TODAY')
-                    vtwoquota = True
+                    VTWOQUOTA = True
+                else:
+                    vtwoquotq = False
             if Anon:
                 logging.debug('###### ANON RESPONSE '+str(response))
                 logging.debug('###### CALLING '+str(callURL))
@@ -644,7 +661,7 @@ def callAPI(URL, API, PARAMS, CURRSSID,Anon=False,Version='',tolog=''):
                 response = a.rsplit('}', 1)[0] + '}'
                 retJson = json.loads(response)
             else:
-                if 'Faite du tri dans vos fichiers roms et repassez demain' in response:
+                if ('Faite du tri dans vos fichiers roms et repassez demain' in response) or 'QUOTA' in response:
                     logging.critical('###### ALLOCATED ALLOWANCE EXCEEDED FOR TODAY')
                     #### RETURN WHEN THERE ALLOWANCE IS DONE
                     #### waitNewDay(runTime)
@@ -657,14 +674,34 @@ def callAPI(URL, API, PARAMS, CURRSSID,Anon=False,Version='',tolog=''):
                     else:
                         retJson = response
             if isinstance(retJson, (dict, list)):
-                return retJson['response']
+                myJson = retJson['response']
+                okcalls = myJson['ssuser']['requeststoday']
+                okmax = myJson['ssuser']['maxrequestsperday']
+                kocalls = myJson['ssuser']['requestskotoday']
+                komax = myJson['ssuser']['maxrequestskoperday']
+                logging.debug ('###### V2 QUOTA INFO - OK CALLS '+str(okcalls)+' KO CALLS '+str(kocalls)+' OK MAX '+str(okmax)+' KO MAX '+str(komax))
+                if int(okcalls) >= int(okmax) or int(kocalls) >= int(komax):
+                    VTWOQUOTA = True
+                    logging.debug('###### MAXIMUM DAILY QUOTA IS OVER')
+                    response = 'QUOTA'
+                else:
+                    VTWOQUOTA = False
+                return myJson
             else:
                 data['Error'] = response
             return json.loads(json.dumps(data))
         except Exception as e:
             data['Error'] = str(e)
+            ####logging.debug ('###### RESPONSE '+str(response.encode('ascii','ignore')))
             data['Response'] =str(response)
             logging.error ('##### FAILED TO CALL API '+str(e))
+            if 'Error 431:' in str(e):
+                logging.debug ('####### SETTING QUOTA TO OVER')
+                VTWOQUOTA = True
+                data['Error'] = 'QUOTA'
+            else:
+                VTWOQUOTA = False
+                logging.debug ('####### SETTING QUOTA TO OK')
             retries = retries - 1
     return json.loads(json.dumps(data))
 
@@ -707,6 +744,9 @@ def grabVideo (URL,destfile,tout):
                 else:
                     if "screenscraper" in URL:
                         URL = URL.replace ('www.','clone.')
+                    if '/api/' in URL:
+                        logging.debug('###### API IS NOT WORKING, LET\'S TRY API2')
+                        URL = URL.replace ('/api/','/api2/')
                 result = -1
             retries = retries + 1
         logging.debug ('###### RESULT OF DOWNLOAD '+str(result))
@@ -772,6 +812,9 @@ def grabMedia(URL,destfile,tout):
                     if 'screenscraper' in URL:
                         logging.debug('###### .WWW IS NOT WORKING, LET\'S TRY CLONE.')
                         URL = URL.replace ('www.','clone.')
+                    if '/api/' in URL:
+                        logging.debug('###### API IS NOT WORKING, LET\'S TRY API2')
+                        URL = URL.replace ('/api/','/api2/')
                 logging.error ('###### DOWNLOAD IS CORRUPTED ON RETRY '+str(retries+1)+' URL '+str(URL))
                 result = -1
             retries = retries + 1
@@ -993,7 +1036,7 @@ def getAllSystems(CURRSSID):
     logging.debug ('###### GETTING ALL SYSTEMS LIST')
     ### THIS IS THE API NAME
     API = "systemesListe"
-    response = callAPI(fixedURL, API, fixParams, CURRSSID,False,'','Get All Systems')
+    response = callAPI(fixedURL, API, fixParams, CURRSSID,False,'2','Get All Systems')
     ### IF WE GET A RESPONSE THEN RETURN THE LIST
     if 'Error' not in response.keys():
         try:
@@ -1376,22 +1419,30 @@ def goForFile(file,path,CURRSSID,extensions,sysid):
         ### SO THIS IS A FILE WITH AN ACCEPTED EXTENSION, PROCESS IT
         file,gameinfo = processFile (path,file,CURRSSID,True,sysid)
     ### DID WE GET SOME GAME INFO?
-    if gameinfo :
-        ### YES WE DID, ADD SOME OF OUR OWN VALUES
-        ### ADD SYSTE ID AS DEFINED IN SCRAPER SITE
-        gameinfo['systemeid'] = sysid
-        ### ADD LOCAL PATH TO THE FILE
-        gameinfo['localpath'] = path+'/'+file
-        ### ADD ABSOLUTE PATH
-        gameinfo['abspath'] = path
-        ### AND FINALLY ADD SHA1 OF THE FILE
-        gameinfo['localhash'] = sha1(path+'/'+file)
-        logging.debug ('###### FOUND GAME INFO FOR '+file)
-        ### LAST BUT NOT LEAST, RETURN INFORMATION
-        return file,gameinfo
+    if gameinfo:
+        try:
+            ### YES WE DID, ADD SOME OF OUR OWN VALUES
+            ### ADD SYSTE ID AS DEFINED IN SCRAPER SITE
+            gameinfo['systemeid'] = sysid
+            ### ADD LOCAL PATH TO THE FILE
+            gameinfo['localpath'] = path+'/'+file
+            ### ADD ABSOLUTE PATH
+            gameinfo['abspath'] = path
+            ### AND FINALLY ADD SHA1 OF THE FILE
+            gameinfo['localhash'] = sha1(path+'/'+file)
+            logging.debug ('###### FOUND GAME INFO FOR '+file)
+            ### LAST BUT NOT LEAST, RETURN INFORMATION
+            return file,gameinfo
+        except Exception as e:
+            ### SO WE DID GET SOMETHING BUT NOT USABLE, RETURN NONE THEN
+            logging.error('###### COULD NOT GET GAME INFO '+str(e))
+            return file, None
     else:
         ### SO WE DIDN'T GET ANYTHING, RETURN NONE THEN
+        logging.info('###### COULD NOT GET GAME INFO ')
         return file, None
+    return file, None
+
 
 def processFile (path,file,CURRSSID,doRename,sysid):
     ### SO WE ARE PROCESSING A GENERAL FILE
@@ -1619,6 +1670,19 @@ def locateShainDB(mysha1):
     return value
 
 def updateDB(mysha1,response):
+    logging.debug ('###### CALLED UPDATE DB WITH RESPONSE '+str(response))
+    if ('Error 400:' in str(response) or 
+       'Error 401:' in str(response) or
+       'Error 403:' in str(response) or 
+       'Error 404:' in str(response) or 
+       'Error 423:' in str(response) or 
+       'Error 426:' in str(response) or 
+       'Error 429:' in str(response) or 
+       'Error 430:' in str(response) or 
+       'Error 431:' in str(response) or 
+       'QUOTA' in str(response)):
+        logging.debug ('###### GOT AN ERROR FROM API CALL SO I\'M NOT UPDATING THE DB HASH')
+        return 
     if not 'urlopen error' in response:
         mycursor = mydb.cursor()
         sql = "REPLACE INTO hashes (hash, response) VALUES (%s, %s)"
@@ -1736,13 +1800,13 @@ def getGameInfo(CURRSSID, pathtofile, file, mymd5, mysha1, mycrc, sysid):
                     ### ADD GAMEID TO PARAMETERS
                     gameparams['gameid'] = response['GameID']
                     ### AND GET THE RESPONSE TO THE CALL
-                    newresponse = callAPI(fixedURL,API,gameparams,CURRSSID,False,'','THERE IS A GAME ID HERE')
+                    newresponse = callAPI(fixedURL,API,gameparams,CURRSSID,False,'2','THERE IS A GAME ID HERE')
                     ### CHECK IF WE WENT OVER QUOTA
                     if newresponse == 'QUOTA':
                         logging.debug ('###### QUOTA DONE')
                         ### WE DID, CAN WE TRY CALLING ANONYMOUS?
                         newresponse = None
-                        newresponse = callAPI(fixedURL, API, gameparams, CURRSSID,True,'','NEWRESPONSE IN QUOTA')
+                        newresponse = callAPI(fixedURL, API, gameparams, CURRSSID,True,'2','NEWRESPONSE IN QUOTA')
                         if newresponse == 'QUOTA':
                             ### NO WE CANNOT
                             return file, 'SKIP'
@@ -1775,14 +1839,14 @@ def getGameInfo(CURRSSID, pathtofile, file, mymd5, mysha1, mycrc, sysid):
             gameparams['gameid'] = response['jeu']['id']
             ### AND WE CALL THE API
             newresponse = None
-            newresponse = callAPI(fixedURL,API,gameparams,CURRSSID,False,'','FROM UPDATEDATA')
+            newresponse = callAPI(fixedURL,API,gameparams,CURRSSID,False,'2','FROM UPDATEDATA')
             ### ARE WE OVER THE ALLOWED QUOTA?
             if newresponse == 'QUOTA':
                 ### YES
                 logging.info ('###### QUOTA DONE, TRYING ANON')
                 ### CAN WE TRY TO CALL IT ANONYMOUSLY?
                 newresponse = None
-                newresponse = callAPI(fixedURL, API, gameparams, CURRSSID,True,'','QUOTA NEWRESPONSE')
+                newresponse = callAPI(fixedURL, API, gameparams, CURRSSID,True,'2','QUOTA NEWRESPONSE')
                 if newresponse == 'QUOTA':
                     ### NO WE CAN'T
                     logging.info ('###### QUOTA REALLY DONE, NOT UPDATING')
@@ -1800,20 +1864,22 @@ def getGameInfo(CURRSSID, pathtofile, file, mymd5, mysha1, mycrc, sysid):
     else:
         ### WE COULD NOT LOCATE THE SHA IN DB
         logging.error('###### CACHE DOES NOT EXISTE IN DB FOR ' + file)
+        logging.debug('###### CALLING API IN NORMAL MODE')
         ### CALL THE API TO GET AN ANSWER
         response = None
-        response = callAPI(fixedURL, API, params, CURRSSID,False,'','NO SHA IN DB')
+        response = callAPI(fixedURL, API, params, CURRSSID,False,'2','NO SHA IN DB')
         ### ARE WE OVER THE QUOTA?
-        if response == 'QUOTA':
+        if 'QUOTA' in response:
             ### WE ARE, CAN WE CALL ANONYMOUSLY?
             response = None
-            response = callAPI(fixedURL, API, params, CURRSSID,True,'','NO SHA IN DB AND QUOTA')
-            if response == 'QUOTA':
+            logging.debug('###### CALLING API IN ANON MODE')
+            response = callAPI(fixedURL, API, params, CURRSSID,True,'2','NO SHA IN DB AND QUOTA')
+            if 'QUOTA' in response:
                 ### NO WE CAN'T
                 return file, 'SKIP'
         ### DID WE GET A PROPER ANSWER? (SSUSER)
         if ('ssuser' not in response) and ('gameid' not in response):
-            ### NO WE DID NOT, ADD LOCAL PVALUES
+            ### NO WE DID NOT, ADD LOCAL VALUES
             response['file'] = pathtofile + '/' + file.replace("'","\\\'")
             response['localhash'] = mysha1
             response['GameID'] = '0'
@@ -1827,6 +1893,10 @@ def getGameInfo(CURRSSID, pathtofile, file, mymd5, mysha1, mycrc, sysid):
     ### WE ASSUME THE ROM WAS NOT FOUND
     foundRom = False
     ### IS THERE AN ERROR IN RESPONSE?
+    logging.debug ('###### RESPONSE IS '+str(response))
+    if 'QUOTA' in response:
+        logging.error ('###### GONE OVER QUOTA')
+        return file,'SKIP'
     if 'Error' in response.keys():
         ### YES THERE IS
         logging.debug('###### API GAVE ERROR BACK, CREATING EMPTY DATA '+str(response))
@@ -1926,7 +1996,7 @@ def scrapeRoms(CURRSSID):
                 else:
                     logging.error ('###### CANNOT FIND PATH '+path)
             else:
-                logging.error ('###### SKIPPING SYSTEM')
+                logging.info ('###### SKIPPING SYSTEM')
     logging.info ('----------------- ALL DONE -------------------')
 
 def updateGameID (file,sha,gameid):
@@ -2522,7 +2592,7 @@ if missing !='':
     ### IT WILL THEN TRY TO MATCH FILENAMES WITH GAME NAMES AND ADD GAME_ID IF FOUND TO DB
     findMissing()
     logging.info ('###### FINSHED LOOKING FOR MISSING GAMES')
-    ##sys.exit(0)
+    sys.exit(0)
     scrapeRoms(CURRSSID)
 
 else:

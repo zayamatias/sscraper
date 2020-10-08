@@ -138,10 +138,13 @@ arcadeSystems = ('75','142','56','151','6','7','8','196','35','47','49','54','55
 
 class Game:
     ### THIS IS THE GAME CLASS, IT WILL HOLD INFORMATION OF EACH SCRAPED GAME
-    def __init__(self, json):
-        if 'localpath' not in json.keys():
+    def __init__(self, jsondata):
+        if 'localpath' not in jsondata.keys():
             return None
-        file = json['localpath']
+        try:
+            file = jsondata['localpath']
+        except Exception as e:
+            logging.error ('###### COULD NOT CREATE LOCALPATH FOR GAME '+str(e))
         ### CAN WE COMPRESS FILE?? THIS IS DONE IN ORDER TO SAVE SPACE
         if file[file.rfind('.'):].lower() not in donotcompress:
             ### YES WE CAN ZIP FILE
@@ -151,33 +154,31 @@ class Game:
             logging.debug ('###### REQUESTED NOT TO ZIP EXTENSION')
             zippedFile = file
         self.path = zippedFile
-        self.name = json['jeu']['nom'].decode('utf8').encode('ascii','ignore')
-        mdisk = multiDisk(self.path)
-        mvers = multiVersion(self.path)
-        mctry = multiCountry(self.path)
-        if mctry:
-            self.name = self.name+' '+mctry.group(0)
-        if mdisk:
-            self.name = self.name+' '+mdisk.group(0)
-        if mvers:
-            self.name = self.name +' ('+mvers.group(0)+')'
-        self.desc = getDesc(json)
-        self.image = getMedia(json['jeu']['medias'],
-                              json['abspath'],
-                              json['localpath'],
-                              json['localhash'],
+        logging.debug ('###### DOING NAME')
+        self.name = getGameName(jsondata,self.path)
+        logging.debug ('###### DOING DESCRIPTION')
+        self.desc = getDesc(jsondata)
+        logging.debug ('###### DOING IMAGES')
+        self.image = getMedia(jsondata['jeu']['medias'],
+                              jsondata['abspath'],
+                              jsondata['localpath'],
+                              jsondata['localhash'],
                               zippedFile)
-        self.video = getVideo(json['jeu']['medias'],
-                              json['abspath'],
-                              json['localpath'],
-                              json['localhash'])
+        logging.debug ('###### DOING VIDEOS')
+        self.video = getVideo(jsondata['jeu']['medias'],
+                              jsondata['abspath'],
+                              jsondata['localpath'],
+                              jsondata['localhash'])
         self.thumbnail = ''
-        self.rating = getRating(json)
-        self.releasedate = getDate(json)
+        logging.debug ('###### GOING TO GET RATING')
+        self.rating = getRating(jsondata)
+        logging.debug ('###### GOING TO GET RELEASE DATE')
+        self.releasedate = getDate(jsondata)
+        logging.debug ('###### GOING TO GET EDITOR/DEVELOPER')
         self.developer = ''
         try:
-            if 'editeur' in json['jeu'].keys:
-                self.publisher = json['jeu']['editeur']
+            if 'editeur' in jsondata['jeu'].keys:
+                self.publisher = jsondata['jeu']['editeur']
             else:
                 self.publisher =''
         except:
@@ -186,29 +187,77 @@ class Game:
         self.players = ''
         self.playcount = ''
         self.lastplayed = ''
-        self.hash = json['localhash']
-        isMissing(json,self.path)
+        self.hash = jsondata['localhash']
+        isMissing(jsondata,self.path)
+        logging.debug ('###### FINSIHED CREATING GAME INSTANCE')
+
     def getXML(self):
         if self is not None:
+            logging.debug('###### GAME OBJECT '+str(self))
             gameNode = ET.Element('game')
             attrs = vars(self)
+            logging.debug('###### GAME OBJECT '+str(attrs))
             for attr in attrs:
+                logging.debug ('###### ATTRIBUTES '+str(attr))
                 subEl = ET.SubElement(gameNode, attr)
                 try:
-                    subEl.text = attrs[attr].decode('utf-8').encode('ascii', 'xmlcharrefreplace')
+                    subEl.text = attrs[attr].decode('utf-8').encode('ascii', 'ignore')
                 except Exception as e:
-                    subEl.text = attrs[attr].encode('ascii', 'xmlcharrefreplace')
+                    ##xmlcharrefreplace
+                    logging.debug ('###### ATTRIBUTES '+str(attrs[attr]))
+                    subEl.text = attrs[attr].encode('utf-8').decode('ascii', 'ignore')
                     logging.error("error "+str(e)+" in path")
             return gameNode
         else:
             return None
 
+def getGameName(jsondata,path):
+    if 'noms' in jsondata['jeu']:
+        name = None
+        names = []
+        if not isinstance(jsondata['jeu']['noms'],dict):
+            logging.debug ('###### NOT A DICT SO CONVERTING '+str(jsondata['jeu']['noms'][0]))
+            for a in jsondata['jeu']['noms']:
+                b = a.values()
+                names.append({'region':b[1],'text':b[0]})
+            logging.debug ('###### CONVERTED '+str(names))
+        else:
+            if 'region' not in str(jsondata['jeu']['noms']):
+                logging.debug ('###### SEEMS LIKE A V1 DICTIONARY')
+                for item in jsondata['jeu']['noms'].items():
+                    names.append({'region':item[0],'text':item[1]})
+            else:
+                names = jsondata['jeu']['noms'] 
+            logging.debug ('###### SEEMS TO BE A PROPER DICTIONARY')
+        logging.debug ('####### NAMES '+str(names))
+        for nom in names:
+            logging.debug ('###### LOOKING FOR NAMES '+str(nom)+' TYPE '+str(type(nom)))
+            if 'ss' in nom['region']:
+                logging.debug ('###### FOUND SCREEN SCRAPER NAME')
+                name = nom['text'].encode('utf-8').decode('ascii','ignore')
+        if not name:
+            logging.debug ('###### DID NOT FOUND SCREEN SCRAPER NAME, ASSIGNING FIRST NAME')
+            name = jsondata['jeu']['nom'][0]['text']
+        mdisk = multiDisk(path)
+        mvers = multiVersion(path)
+        mctry = multiCountry(path)
+        if mctry:
+            name = name+' '+mctry.group(0)
+        if mdisk:
+            name = name+' '+mdisk.group(0)
+        if mvers:
+            name = name +' ('+mvers.group(0)+')'
+    else:
+        logging.debug ('###### NOMS TAG NOT IN JSON '+str(jsondata['jeu']))
+        name = jsondata['jeu']['nom']
+    return name
+
 def updateInDBV2Call(api,params,response):
+    logging.debug ('###### INSIDE INSERT INTO DB FOR V2 CALL '+str(response))
     ### Update the DB with the call to V2
     if ('Error 400:' in str(response) or 
        'Error 401:' in str(response) or 
        'Error 403:' in str(response) or 
-       'Error 404:' in str(response) or 
        'Error 423:' in str(response) or 
        'Error 426:' in str(response) or 
        'Error 429:' in str(response) or 
@@ -290,7 +339,7 @@ def callAPIURL(URL):
     ## Check if it is a v2 Call first
     response=''
     apiname =''
-    logging.debug ('####### CALLING URL '+URL)
+    logging.debug ('####### GOINF TO CALL URL '+URL)
     v2 = re.search('\/[a|A][P|p][i|I]2\/',URL)
     logging.debug('###### IS V2 '+str(v2))
     if v2:
@@ -319,14 +368,23 @@ def callAPIURL(URL):
             if response:
                 #logging.debug ('###### RESPONSE FROM DB '+str(response))
                 return response
+            else:
+                logging.debug ('###### DID NOT FIND V2 ANSWER IN DB')
     request = urllib2.Request(URL)
-    response = urllib2.urlopen(request,timeout=20).read()
-    #logging.debug ('####### GOT RESPONSE ['+str(response)+'] AFTER CALLING URL')
-    if v2 and apiname !='' and response!='':
-        updateInDBV2Call(apiname,dbparams,response)
+    try:
+        logging.debug ('###### ACTUALLY CALLING THE URL')
+        response = urllib2.urlopen(request,timeout=20).read()
+    except Exception as e:
+        logging.error ('###### ERROR IN CALLING URL '+str(e))
+        response = str(e)
+    logging.debug ('####### GOT A RESPONSE AFTER CALLING URL')
     if 'Error 431:' in response:
+        logging.debug ('###### GOT A 431 ERROR')
         return 'QUOTA' 
     else:
+        if v2 and apiname !='' and response!='':
+            logging.debug ('###### GOING TO UPDATE CACHE IN DB FOR V2')
+            updateInDBV2Call(apiname,dbparams,response)
         return response
 
 def isMissing(json,file):
@@ -344,6 +402,9 @@ def isMissing(json,file):
             else:
                 ### NO, SO WRITE SYSTEM AS UNKNOWN
                 writeMissing('UNKNOWN',file)
+        else:
+            logging.debug ('###### NOT MISSING, FOUND ALL INFO')
+
     except Exception as e:
         logging.error('###### GOT AN EXCEPTION '+str(e))
         ### THERE WAS AN EXCEPTION, SO YEAH, LOG IT
@@ -518,9 +579,11 @@ def getDesc(json):
     if isinstance(json, dict):
         if 'jeu' in json.keys():
             jeu = json['jeu']
-            if isinstance(jeu, dict):
+            if not isinstance(jeu, dict):
                 if 'synopsis' in jeu.keys():
                     synopsis = jeu['synopsis']
+                    if not isinstance(synopsis, dict):
+                        synopsis = synopsis[0]
                     if isinstance(synopsis, dict):
                         for key, value in synopsis.iteritems():
                             if key == 'synopsis_en':
@@ -534,17 +597,30 @@ def getDate(json):
     # THSI FUNCTION GETS THE RELEASE DATE OF A GAME
     reldate = ''
     if isinstance(json, dict):
+        logging.debug ('###### IT IS A DICTIONARY')
         if 'jeu' in json.keys():
             jeu = json['jeu']
+            logging.debug ('###### GOT JEU KEY')
             if isinstance(jeu, dict):
+                logging.debug ('###### IT IS A DICTIONARY')
                 if 'dates' in jeu.keys():
+                    logging.debug ('###### DATES IN THE KEYS')
                     dates = jeu['dates']
+                    if not isinstance(dates, dict):
+                        logging.debug ('###### DATES IS NOT DICTIONARY')
+                        if dates:
+                            dates = dates[0]
+                        else:
+                            dates = ['']
                     if isinstance(dates, dict):
+                        logging.debug ('###### DATES IS DICTIONARY')
                         for key, value in dates.iteritems():
                             if key == 'date_wor':
+                                logging.debug('####### DATE BY WORLD '+str(value))
                                 reldate = value
                     else:
-                        reldate = dates
+                        logging.debug('####### DATE BY INDEX '+str(dates))
+                        reldate = dates[0]
     return reldate
 
 def writeXML(rootElement, filename):
@@ -609,17 +685,20 @@ def waitNewDay(runTime):
         params['gameid'] = 1
         response = callAPI(fixedURL,API,params,0,anon,'2','WAIT NEW DAY')
         anon = not anon
-        if 'ssuser'  in response:
+        if 'jeu'  in response:
             allowed = True
             VTWOQUOTA = False            
     logging.info ('###### FINISHED WAITING')
     return
 
 def callAPI(URL, API, PARAMS, CURRSSID,Anon=False,Version='',tolog=''):
+    ## REMOVE CRC AND MD5, TENDS TO FAIL IN v2
+    PARAMS.pop('md5',None)
+    PARAMS.pop('crc',None)   
     global VTWOQUOTA
     if Version=='2' and VTWOQUOTA and not Anon:
-        logging.info ('###### DAILY QUOTA HAS BEEN EXCEEDED FOR V2 API - CANNOT CALL IT FOR NOW')
-        return 'QUOTA'
+        logging.info ('###### DAILY QUOTA HAS BEEN EXCEEDED FOR V2 API - CANNOT CALL IT FOR NOW - GOING ANON')
+        Anon = True
     logging.debug ('###### CALLING API WITH EXTRA '+tolog)
     ### FNCTION THAT ACTUALLY DOES THE CALL TO THE API
     retries = 10
@@ -645,18 +724,24 @@ def callAPI(URL, API, PARAMS, CURRSSID,Anon=False,Version='',tolog=''):
         data = {}
         retJson = None
         try:
-            logging.debug ('###### CALLING URL '+callURL)
             response = callAPIURL(callURL)
-            ### TODO : HANDLE QUOTA FOR V2
             if str(Version)=="2":        
                 if 'QUOTA' in response:
                     logging.info ('###### YOUR SCRAPING QUOTA FOR V2 IS OVER FOR TODAY')
                     VTWOQUOTA = True
+                    if not Anon:
+                        logging.info ('###### TRYING CALLLING ANON')
+                        PARAMS['ssid']=''
+                        url_values = urllib.urlencode(PARAMS)
+                        callURL = URL+API+"?"+url_values
+                        response = callAPIURL(callURL)
+
                 else:
                     VTWOQUOTA = False
             if Anon:
                 logging.debug('###### ANON RESPONSE '+str(response))
                 logging.debug('###### CALLING '+str(callURL))
+            
             if '{' in response:
                 a = '{'+response.split('{', 1)[1]
                 response = a.rsplit('}', 1)[0] + '}'
@@ -675,34 +760,35 @@ def callAPI(URL, API, PARAMS, CURRSSID,Anon=False,Version='',tolog=''):
                     else:
                         retJson = response
             if isinstance(retJson, (dict, list)):
-                myJson = retJson['response']
-                okcalls = myJson['ssuser']['requeststoday']
-                okmax = myJson['ssuser']['maxrequestsperday']
-                kocalls = myJson['ssuser']['requestskotoday']
-                komax = myJson['ssuser']['maxrequestskoperday']
-                logging.debug ('###### V2 QUOTA INFO - OK CALLS '+str(okcalls)+' KO CALLS '+str(kocalls)+' OK MAX '+str(okmax)+' KO MAX '+str(komax))
-                if int(okcalls) >= int(okmax) or int(kocalls) >= int(komax):
-                    VTWOQUOTA = True
-                    logging.debug('###### MAXIMUM DAILY QUOTA IS OVER')
-                    response = 'QUOTA'
-                else:
-                    VTWOQUOTA = False
+                if not Anon:
+                    myJson = retJson['response']
+                    okcalls = myJson['ssuser']['requeststoday']
+                    okmax = myJson['ssuser']['maxrequestsperday']
+                    kocalls = myJson['ssuser']['requestskotoday']
+                    komax = myJson['ssuser']['maxrequestskoperday']
+                    logging.debug ('###### V2 QUOTA INFO - OK CALLS '+str(okcalls)+' KO CALLS '+str(kocalls)+' OK MAX '+str(okmax)+' KO MAX '+str(komax))
+                    if int(okcalls) >= int(okmax) or int(kocalls) >= int(komax):
+                        VTWOQUOTA = True
+                        logging.debug('###### MAXIMUM DAILY QUOTA IS OVER')
+                        response = 'QUOTA'
+                    else:
+                        VTWOQUOTA = False
                 return myJson
             else:
                 data['Error'] = response
             return json.loads(json.dumps(data))
         except Exception as e:
             data['Error'] = str(e)
-            ####logging.debug ('###### RESPONSE '+str(response.encode('ascii','ignore')))
-            data['Response'] =str(response)
+            #logging.debug ('###### RESPONSE '+str(e))
+            data['Response'] =str(response.encode('utf-8').decode('ascii','ignore'))
             logging.error ('##### FAILED TO CALL API '+str(e))
             if 'Error 431:' in str(e):
                 logging.debug ('####### SETTING QUOTA TO OVER')
                 VTWOQUOTA = True
                 data['Error'] = 'QUOTA'
             else:
-                VTWOQUOTA = False
-                logging.debug ('####### SETTING QUOTA TO OK')
+                VTWOQUOTA = Anon
+                logging.debug ('####### SETTING QUOTA TO '+str(Anon))
             retries = retries - 1
     return json.loads(json.dumps(data))
 
@@ -836,6 +922,8 @@ def grabMedia(URL,destfile,tout):
         return ''
 
 def getScreenshot(medialist,num):
+    if not isinstance (medialist,dict):
+        medialist = medialist[0]
     if 'media_screenshot' in medialist.keys():
         URL = medialist['media_screenshot']
         if 'screenscraper' in URL:
@@ -889,6 +977,9 @@ def getBezelURL (list):
 
 
 def getBezel(medialist,syspath,name):
+    if str(type(medialist))=='<type \'list\'>':
+        medialist=dict(medialist[0])
+    logging.debug('####### TYPE OF MEDIALIST '+str(type(medialist)))
     if 'media_bezels' in medialist.keys():
         mediabezels = medialist['media_bezels']
         logging.debug ('###### THERE ARE BEZELS FOR THIS FILE')
@@ -945,8 +1036,10 @@ def getBoxArt(medialist,num):
 def doMediaDownload(medialist,destfile,path,hash):
     logging.debug ('###### DOWNLOADING MEDIA')
     if (not(os.path.isfile(destfile)) and ('images' in destfile)) or UPDATEDATA:
+        logging.debug('###### GOING TO DOWNLOAD SCREENSHOT')
         img1 = getScreenshot(medialist,random.randint(0,10000))
         if (img1 <> ''):
+            logging.debug('###### GOING TO DOWNLOAD BOXART')
             img2 = getBoxArt(medialist,random.randint(0,10000))
             generateImage(img1,img2,destfile)
         else:
@@ -961,8 +1054,9 @@ def doMediaDownload(medialist,destfile,path,hash):
 
 def processBezels(medialist,destfile,path,hash,zipname):
     logging.debug ('###### PROCESS BEZEL FOR '+zipname)
-    logging.debug ('###### DOWNLOADING BEZELS')
+    logging.debug ('###### DOWNLOADING BEZELS '+str(medialist))
     thisbezel = getBezel(medialist,path,hash)
+    logging.debug ('###### BEZEL DIRECTORY')
     bezeldir = path.replace('roms','overlays')
     if not os.path.exists(bezeldir):
         os.makedirs(bezeldir)
@@ -983,6 +1077,9 @@ def processBezels(medialist,destfile,path,hash,zipname):
         f.close
 
 def doVideoDownload(medialist,destfile):
+    if str(type(medialist))=='<type \'list\'>':
+        medialist=dict(medialist[0])
+    logging.debug('####### TYPE OF MEDIALIST '+str(type(medialist)))
     if 'media_video' in medialist.keys():
         URL = medialist['media_video']
         if 'screenscraper' in URL:
@@ -996,7 +1093,11 @@ def doVideoDownload(medialist,destfile):
 def getVideo(medialist, path, file, hash):
     logging.debug ('###### STARTED GRABBING VIDEO PROCESS')
     destfile = ''
+    logging.debug ('###### MEDIALIST IS '+str(medialist))
     if medialist != '':
+        if not isinstance(medialist,dict):
+            logging.debug ('###### MEDIALIST NOT DICT SO TRYING TO GET IT '+str(medialist))
+            medialist=medialist[0]
         logging.debug('##### GRABBING VIDEO FOR ' + file)
         destfile = path+'/videos/'+hash+'-video.mp4'
         if os.path.isfile(destfile):
@@ -1008,6 +1109,8 @@ def getVideo(medialist, path, file, hash):
                     doVideoDownload(medialist,destfile)
         else:
             doVideoDownload(medialist,destfile)
+    else:
+        logging.debug ('###### MEDIALIST IS EMPTY')
     return destfile
 
 def getMedia(medialist, path, file, hash,zipname):
@@ -1309,7 +1412,7 @@ def process7Zip(path,zipfile,CURRSSID,sysid):
                 logging.error ('###### COULD NOT REMVOE '+zfile+' '+str(e))
             gameinfo = processFile (path,zfile,CURRSSID,True,sysid)
             if gameinfo:
-                if 'ssuser' in gameinfo and 'jeu' in gameinfo:
+                if 'jeu' in gameinfo:
                     logging.info ('###### FOUND GAME INFO FOR '+zipfile)
                     return gameinfo
     logging.info ("###### DID NOT FIND GAME INFO FOR "+zipfile)
@@ -1319,7 +1422,7 @@ def processZip(path,zipfile,CURRSSID,extensions,sysid):
     logging.debug ('###### PROCESSING ZIPFILE '+zipfile)
     zipfile,gameinfo = processFile (path,zipfile,CURRSSID,True,sysid)
     if gameinfo:
-        if 'ssuser' in gameinfo:
+        if 'jeu' in gameinfo:
             logging.debug ('###### FOUND INFO FOR FILE '+zipfile)
             return zipfile,gameinfo
     logging.debug ('###### INFO FOR ZIPFILE '+zipfile +' NOT FOUND SO GOING INSIDE')
@@ -1356,7 +1459,7 @@ def processZip(path,zipfile,CURRSSID,extensions,sysid):
             except Exception as e:
                 logging.error ('###### COULD NOT DELETE '+proczfile+' '+str(e))
             if gameinfo:
-                if ('ssuser' in gameinfo) and ('jeu' in gameinfo):
+                if ('jeu' in gameinfo):
                     logging.debug ('###### FOUND GAME INFO FOR '+zipfile)
                     ### FOUND GAME INFO FOR FILE INSIDE
                     ### WE MIGHT AS WELL STORE SHAS FOR ZIP
@@ -1433,6 +1536,7 @@ def goForFile(file,path,CURRSSID,extensions,sysid):
             gameinfo['localhash'] = sha1(path+'/'+file)
             logging.debug ('###### FOUND GAME INFO FOR '+file)
             ### LAST BUT NOT LEAST, RETURN INFORMATION
+            logging.debug('###### '+str(gameinfo))
             return file,gameinfo
         except Exception as e:
             ### SO WE DID GET SOMETHING BUT NOT USABLE, RETURN NONE THEN
@@ -1576,8 +1680,6 @@ def grabData(system, path, CURRSSID, acceptedExtens):
             CURRSSID = 0
         ### INFORM WE HAVE FINISHED PROCESSING FILE
         logging.info ('---------------------- END FILE ['+procfile+'] ------------------------------')
-        #### REMOVE THE LINE BELOW PLEASE
-        sys.exit(0)
     ### WE HAVE PROCESSED ALL FILES, SO ADD GAMELIST TO THE ROOT ELEMENT OF THE XML
     tree._setroot(gamelist)
     ### SET THE DESTINATION XML FILE
@@ -1677,7 +1779,6 @@ def updateDB(mysha1,response):
     if ('Error 400:' in str(response) or 
        'Error 401:' in str(response) or
        'Error 403:' in str(response) or 
-       'Error 404:' in str(response) or 
        'Error 423:' in str(response) or 
        'Error 426:' in str(response) or 
        'Error 429:' in str(response) or 
@@ -1773,9 +1874,9 @@ def getGameInfo(CURRSSID, pathtofile, file, mymd5, mysha1, mycrc, sysid):
             loggign.info ('###### QUOTA LIMIT DONE RETURNED BY API')
             return file,'SKIP'
         ### DID THE SCRAPER RETURN A VALID ROM?
-        ### USUALLY IN A VALID RESPONSE WE WOULD HAVE THE SSUSER KEY
+        ### USUALLY IN A VALID RESPONSE WE WOULD HAVE THE JEU KEY
         ### AND OF COURSE THE ANSWER WILL NOT BE EMPTY
-        if not ('ssuser' in response) and (response != ''):
+        if not ('jeu' in response) and (response != ''):
             #YES WE DID
             logging.info ('###### GAME INFO WAS NOT PRESENT FOR ROM')
             ### ONE OF THE FEATURES OF THE SCRAPER IS TO ALLOW YOU TO ASSIGN GAME ID'S TO RECORDS IN DB, WHICH WOULD
@@ -1813,10 +1914,10 @@ def getGameInfo(CURRSSID, pathtofile, file, mymd5, mysha1, mycrc, sysid):
                         if newresponse == 'QUOTA':
                             ### NO WE CANNOT
                             return file, 'SKIP'
-                    ### SO, DID WE GET A PROPER RESPONSE? (REMEMBER SSUSER NEEDS TO BE THERE)
-                    if 'ssuser' in newresponse:
+                    ### SO, DID WE GET A PROPER RESPONSE? (REMEMBER JEU NEEDS TO BE THERE)
+                    if 'jeu' in newresponse:
                         ### YES WE DID
-                        logging.debug ('###### SSUSER IS IN RESPONSE')
+                        logging.debug ('#### JEU IS IN RESPONSE')
                         ### ASSIGN NEW RESPONSE TO OLD ONE, SO WE DO NOT CONFUSE OURSELVES
                         response = None
                         response = newresponse
@@ -1827,11 +1928,11 @@ def getGameInfo(CURRSSID, pathtofile, file, mymd5, mysha1, mycrc, sysid):
                         doupdate = False
                     else:
                         ### NO IT WAS NOT A PROPER ANSWER
-                        logging.debug ('###### SSUSER NOT IN RESPONSE')
+                        logging.debug ('###### JEU NOT IN RESPONSE')
                         ### RETURN WHATEVER WE GOT
                         return file,newresponse
         ### HERE WE CHECK IF IT HAS BEEN REQUESTED TO UPDATE DATA FROM SCRAPER OR NOT
-        if UPDATEDATA and 'ssuser' in response and doupdate:
+        if UPDATEDATA and 'jeu' in response and doupdate:
             ### UPDATE DATA IN DB BY FETCHING API AGAIN
             logging.debug ('###### TRYING TO UPDATE CACHE DATA')
             ### WE INITIALIZE THE FIXED PARAMETERS
@@ -1855,8 +1956,8 @@ def getGameInfo(CURRSSID, pathtofile, file, mymd5, mysha1, mycrc, sysid):
                     logging.info ('###### QUOTA REALLY DONE, NOT UPDATING')
                     ### SO SKIP FILE
                     return file, 'SKIP'
-            ### DID WE GET A VALID RESPONSE??? (REMMEBER SSUSER)
-            if 'ssuser' in newresponse:
+            ### DID WE GET A VALID RESPONSE??? (REMMEBER JEU)
+            if 'jeu' in newresponse:
                 ### YES WE DID
                 response = None
                 response = newresponse
@@ -1873,15 +1974,10 @@ def getGameInfo(CURRSSID, pathtofile, file, mymd5, mysha1, mycrc, sysid):
         response = callAPI(fixedURL, API, params, CURRSSID,False,'2','NO SHA IN DB')
         ### ARE WE OVER THE QUOTA?
         if 'QUOTA' in response:
-            ### WE ARE, CAN WE CALL ANONYMOUSLY?
-            response = None
-            logging.debug('###### CALLING API IN ANON MODE')
-            response = callAPI(fixedURL, API, params, CURRSSID,True,'2','NO SHA IN DB AND QUOTA')
-            if 'QUOTA' in response:
-                ### NO WE CAN'T
-                return file, 'SKIP'
-        ### DID WE GET A PROPER ANSWER? (SSUSER)
-        if ('ssuser' not in response) and ('jeu' not in response):
+            ## IMPOSSIBLE TO DO CALLS
+            return file, 'SKIP'
+        ### DID WE GET A PROPER ANSWER? (JEU)
+        if ('jeu' not in response):
             ### NO WE DID NOT, ADD LOCAL VALUES
             response['file'] = pathtofile + '/' + file.replace("'","\\\'")
             response['localhash'] = mysha1
@@ -1901,20 +1997,23 @@ def getGameInfo(CURRSSID, pathtofile, file, mymd5, mysha1, mycrc, sysid):
         logging.error ('###### GONE OVER QUOTA')
         return file,'SKIP'
     if 'Error' in response.keys():
-        ### YES THERE IS
-        logging.debug('###### API GAVE ERROR BACK, CREATING EMPTY DATA '+str(response))
-        ### SO WE CREATE AN EMPTY ANSWER AND RETURN IT
-        return file,{'abspath': pathtofile,
-                'localpath': pathtofile+'/'+file,
-                'localhash': mysha1.upper(),
-                'jeu':
-                {
-                 'nom': file,
-                 'synopsis': '',
-                 'medias': '',
-                 'dates': ''
-                }
-                }
+        if response['Error']=='ssuser':
+            loggin.debug ('###### IGNORING THIS ERROR')
+        else:
+            ### YES THERE IS
+            logging.debug('###### API GAVE ERROR BACK, CREATING EMPTY DATA '+str(response))
+            ### SO WE CREATE AN EMPTY ANSWER AND RETURN IT
+            return file,{'abspath': pathtofile,
+                    'localpath': pathtofile+'/'+file,
+                    'localhash': mysha1.upper(),
+                    'jeu':
+                    {
+                    'nom': file,
+                    'synopsis': '',
+                    'medias': '',
+                    'dates': ''
+                    }
+                    }
     ## SO NOW WE HAVE A PROPER ANSER TO RETURN`, BUT WE ADD THE LOCAL VALUES
     response['localpath'] = pathtofile+'/'+escapeFileName(file)
     response['localhash'] = mysha1.upper()
@@ -1923,7 +2022,7 @@ def getGameInfo(CURRSSID, pathtofile, file, mymd5, mysha1, mycrc, sysid):
     return file,response
 
 
-def scrapeRoms`(CURRSSID):
+def scrapeRoms(CURRSSID):
     ### OPEN SYSTEM CONFIGURATION
     with open(sysconfig, 'r') as xml_file:
         tree = ET.ElementTree()
@@ -2512,7 +2611,7 @@ def updateFile(path,localSHA,localCRC,localMD):
     filepath = path[:path.rindex('/')+1]
     filext = path[path.rindex('.'):]
     localfile,thisGame = getGameInfo(0,path,path[path.rindex('/')+1:],localMD,localSHA,localCRC,0)
-    if 'ssuser' not in str(thisGame):
+    if 'jeu' not in str(thisGame):
         ### The game information is not complete, better not to process
         print 'SKIPPING '+localSHA
         return

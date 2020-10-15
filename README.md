@@ -81,3 +81,11 @@ The switch '--clean SYSTEM' will force the script to clean the DB for informatio
 ## Rename Mode
 
 The switch '--rename' will fetch all games in the local DB, and try to rename filenames to the actual game name. Usefull if you like to have a neat set of files.
+
+## Clone DB mode
+
+Try --startid (game_id of choice) to start download game information into the local DB starting from game_id, data will be stored locally so you would still eb able to scrap roms regardless if the site is down or your quota is over.
+
+## Sort Mode
+
+The --sort (directory) will sort all your roms to a destination directory, usefull if you want o have a precise list of roms sorted by their system (a directory per system).

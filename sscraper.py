@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 # Your code goes below this line
 
+from shutil import copyfile
 import csv
 import ast
 import urllib2
@@ -42,42 +43,42 @@ import config
 
 parser = argparse.ArgumentParser(description='ROM scraper, get information of your roms from screenscraper.fr')
 parser.add_argument('--missing', help='Try to find missing ganes from the missing file',nargs=1)
-parser.add_argument('--update', help='Update local DB information from screenscraper',const='True',nargs='?')
-parser.add_argument('--clean', help='Clean a system from the DB, deletes all records from files',nargs=1)
-parser.add_argument('--rename', help='Rename files to match the actual game name in the DB',nargs='?')
-args = vars(parser.parse_args())
+parser.add_argument('--update', help='Update local DB information from screenscraper',action='store_true')
+parser.add_argument('--clean', help='Clean a system from the DB, deletes all records from files', action='store_true')
+parser.add_argument('--rename', help='Rename files to match the actual game name in the DB', action='store_true')
+parser.add_argument('--startid', help='Start importing DB at gameid',nargs=1)
+parser.add_argument('--localdb', help='Use only local DB for scraping (except media)', action='store_true')
+parser.add_argument('--sort', help='Sorts all your roms and stores them by system in a new directroy structure',nargs=1)
+
+argsvals = vars(parser.parse_args())
 
 try:
-    missing = args['missing'][0]
+    missing = argsvals['missing'][0]
 except:
     missing = ''
 
 try:
-    update = args['update']
-    if update == None : update = False
+    sortroms = argsvals['sort'][0]
 except:
-    update = False
+    sortroms = ''
+
+localdb = argsvals['localdb']
+update = argsvals['update']
+dbRename = argsvals['rename']
+cleanSystem = argsvals['clean']
 
 try:
-    dbRename = args['rename']
-    if dbRename == None:
-        dbRename = False
-    else:
-        dbRename = True
+    startid= argsvals['startid'][0]
+    migrateDB = True
 except:
-    dbRename = False
-
-try:
-    cleanSystem = args['clean'][0]
-except:
-    cleanSystem = ''
+    migrateDB = False
 
 UPDATEDATA = update
 
 try:
     logging.basicConfig(filename='sv2log.txt', filemode='a',
                         format='%(asctime)s - %(process)d - %(name)s - %(levelname)s - %(message)s',
-                        level=logging.DEBUG)
+                        level=logging.ERROR)
     logging.debug("Logging service started")
 except Exception as e:
     logging.debug('error al crear log '+str(e))
@@ -201,11 +202,11 @@ class Game:
                 logging.debug ('###### ATTRIBUTES '+str(attr))
                 subEl = ET.SubElement(gameNode, attr)
                 try:
-                    subEl.text = attrs[attr].decode('utf-8').encode('ascii', 'ignore')
+                    subEl.text = attrs[attr].decode('utf-8').encode('ascii', 'replace')
                 except Exception as e:
                     ##xmlcharrefreplace
                     logging.debug ('###### ATTRIBUTES '+str(attrs[attr]))
-                    subEl.text = attrs[attr].encode('utf-8').decode('ascii', 'ignore')
+                    subEl.text = attrs[attr].encode('utf-8').decode('ascii', 'replace')
                     logging.error("error "+str(e)+" in path")
             return gameNode
         else:
@@ -253,7 +254,7 @@ def getGameName(jsondata,path):
     return name
 
 def updateInDBV2Call(api,params,response):
-    logging.debug ('###### INSIDE INSERT INTO DB FOR V2 CALL '+str(response))
+    logging.debug ('###### INSIDE INSERT INTO DB FOR V2 CALL '+str(params))
     ### Update the DB with the call to V2
     if ('Error 400:' in str(response) or 
        'Error 401:' in str(response) or 
@@ -263,9 +264,11 @@ def updateInDBV2Call(api,params,response):
        'Error 429:' in str(response) or 
        'Error 430:' in str(response) or 
        'Error 431:' in str(response) or 
-       'QUOTA' in str(response)):
+       response == 'QUOTA'  or
+       params == 'output=jsongameid=1'):
+        ### Gameid=1 is added to the non caching criteria to avoid being there when quota is over and checking 
         ### TODO VERIFY POSSIBILITY OF PASSING FALSE
-        logging.error ('###### GOT AN ERROR FROM API CALL SO NOT UPDATING V2 DB')
+        logging.error ('###### GOT AN ERROR FROM API CALL SO NOT UPDATING V2 DB '+response)
         return True
     result = ''
     logging.debug ('###### CONNECTING TO DB TO UPDATE CACHED RESULT FOR V2 CALL')
@@ -293,9 +296,15 @@ def updateInDBV2Call(api,params,response):
         else:
             logging.debug ('###### INSERTED SUCCESFULLY IN DB')
             mydb.commit()
+            ### I managed to update the DB with a V2 call, if this is a new game, I might as well update the new DB
+            try:
+                if response['jeu']:
+                    insertGameInLocalDb(response['jeu'])
+            except:
+                logging.info ('###### THERE IS NO GAME IN THE RESPONSE')
             return True
     except Exception as e:
-        logging.error ('###### CANNOT QUERY THE DB DUE TO ERROR - '+str(e))
+        logging.error ('###### CANNOT QUERY THE DB DUE TO ERROR - '+str(mycursor.statement)+' - '+str(e))
         return True
     return True
 
@@ -330,7 +339,7 @@ def searchInDBV2Call(api,params):
             logging.debug ('###### FOUND CACHED CALL IN DB')
             return result
     except Exception as e:
-        logging.error ('###### CANNOT QUERY THE DB DUE TO ERROR - '+str(e))
+        logging.error ('###### CANNOT QUERY THE DB DUE TO ERROR - '+str(mycursor.statement)+' - '+str(e))
         return None
     return None
 
@@ -339,7 +348,7 @@ def callAPIURL(URL):
     ## Check if it is a v2 Call first
     response=''
     apiname =''
-    logging.debug ('####### GOINF TO CALL URL '+URL)
+    logging.debug ('####### GOING TO CALL URL '+URL)
     v2 = re.search('\/[a|A][P|p][i|I]2\/',URL)
     logging.debug('###### IS V2 '+str(v2))
     if v2:
@@ -365,21 +374,31 @@ def callAPIURL(URL):
             logging.debug ('###### CALLED API '+apiname)
             logging.debug ('###### PARAMETERS '+dbparams)
             response = searchInDBV2Call(apiname,dbparams)
+            logging.debug ('###### AFTER SEARCH IN DB')
             if response:
-                #logging.debug ('###### RESPONSE FROM DB '+str(response))
+                logging.debug ('###### RETURNING RESPONSE')
                 return response
             else:
                 logging.debug ('###### DID NOT FIND V2 ANSWER IN DB')
     request = urllib2.Request(URL)
     try:
-        logging.debug ('###### ACTUALLY CALLING THE URL')
+        logging.debug ('###### ACTUALLY CALLING THE URL '+URL)
         response = urllib2.urlopen(request,timeout=20).read()
+        logging.debug ('###### DECODING RESPONSE')
+        response = response.decode('utf-8').encode('ascii','replace') ### DO NOT TOUCH
+        try:
+            retJson = json.loads(response)
+        except:
+            logging.debug ('###### THE RETURN JSON WHEN CALLED API IS NOT VALID, WILL TRY TO FIX')
+            err = response.rfind ('],')
+            new_response = response[:err] + "]" + response[err+2:]
+            response = new_response
     except Exception as e:
         logging.error ('###### ERROR IN CALLING URL '+str(e))
         response = str(e)
     logging.debug ('####### GOT A RESPONSE AFTER CALLING URL')
-    if 'Error 431:' in response:
-        logging.debug ('###### GOT A 431 ERROR')
+    if 'Error 401:' in response or 'Error 431:' in response or 'Error 430:' in response:
+        logging.debug ('###### GOT A 43x ERROR (QUOTA)')
         return 'QUOTA' 
     else:
         if v2 and apiname !='' and response!='':
@@ -699,6 +718,7 @@ def callAPI(URL, API, PARAMS, CURRSSID,Anon=False,Version='',tolog=''):
     if Version=='2' and VTWOQUOTA and not Anon:
         logging.info ('###### DAILY QUOTA HAS BEEN EXCEEDED FOR V2 API - CANNOT CALL IT FOR NOW - GOING ANON')
         Anon = True
+        return 'QUOTA'
     logging.debug ('###### CALLING API WITH EXTRA '+tolog)
     ### FNCTION THAT ACTUALLY DOES THE CALL TO THE API
     retries = 10
@@ -716,52 +736,47 @@ def callAPI(URL, API, PARAMS, CURRSSID,Anon=False,Version='',tolog=''):
     API = Version+'/'+API+".php"
     callURL = URL+API+"?"+url_values
     ### CREATE EMPTY VARIABLES
-    while retries > 0 and (not VTWOQUOTA or Version !='2' or Anon):
-        ### EMPTY RESPONSE JUST IN CASE
-        response = None
-        logging.debug ('###### CALLING API TRY '+str(11-retries))
-        logging.debug ('##### ACTUAL CALL TO API '+API)
-        data = {}
-        retJson = None
-        try:
-            response = callAPIURL(callURL)
-            if str(Version)=="2":        
-                if 'QUOTA' in response:
-                    logging.info ('###### YOUR SCRAPING QUOTA FOR V2 IS OVER FOR TODAY')
-                    VTWOQUOTA = True
-                    if not Anon:
-                        logging.info ('###### TRYING CALLLING ANON')
-                        PARAMS['ssid']=''
-                        url_values = urllib.urlencode(PARAMS)
-                        callURL = URL+API+"?"+url_values
-                        response = callAPIURL(callURL)
-
-                else:
-                    VTWOQUOTA = False
-            if Anon:
-                logging.debug('###### ANON RESPONSE '+str(response))
-                logging.debug('###### CALLING '+str(callURL))
-            
-            if '{' in response:
-                a = '{'+response.split('{', 1)[1]
-                response = a.rsplit('}', 1)[0] + '}'
-                retJson = json.loads(response)
+    ### EMPTY RESPONSE JUST IN CASE
+    response = None
+    logging.debug ('###### CALLING API ')
+    logging.debug ('##### ACTUAL CALL TO API '+API)
+    data = {}
+    retJson = None
+    try:
+        logging.debug ('###### GOING TO CALL API URL')
+        response = callAPIURL(callURL)
+        logging.debug ('###### CALLED API URL')
+        if response == 'QUOTA':
+            if not Anon:
+                logging.info ('###### YOUR SCRAPING QUOTA FOR V2 IS OVER FOR TODAY')
+                VTWOQUOTA = True
+                return 'QUOTA'
             else:
-                if ('Faite du tri dans vos fichiers roms et repassez demain' in response) or 'QUOTA' in response:
-                    logging.critical('###### ALLOCATED ALLOWANCE EXCEEDED FOR TODAY')
-                    #### RETURN WHEN THERE ALLOWANCE IS DONE
-                    #### waitNewDay(runTime)
-                    return 'QUOTA'
-                    response = callAPIURL(callURL) 
-                    if '{' in response:
-                        a = '{'+response.split('{', 1)[1]
-                        response = a.rsplit('}', 1)[0] + '}'
-                        retJson = json.loads(response)
-                    else:
-                        retJson = response
-            if isinstance(retJson, (dict, list)):
-                if not Anon:
-                    myJson = retJson['response']
+                logging.info ('###### YOUR ANON SCRAPING QUOTA FOR V2 IS OVER FOR TODAY')
+                VTWOQUOTA = False
+                return 'QUOTA'
+        else:
+            logging.debug ('###### QUOTA IS NOT IN RESPONSE OR WE ARE')
+            VTWOQUOTA = False
+        logging.debug ('###### CHECKING IF "{" IN RESPONSE')
+        if '{' in response:
+            logging.debug ('###### YES THERE IS { IN RESPONSE')
+            a = '{'+response.split('{', 1)[1]
+            response = a.rsplit('}', 1)[0] + '}'
+            try:
+                retJson = json.loads(response)
+            except:
+                logging.debug ('###### THE RETURN JSON IS NOT VALID, WILL TRY TO FIX')
+                err = response.rfind ('],')
+                new_response = response[:err] + "]" + response[err+2:]
+                retJson = json.loads(new_response)
+        else:
+            logging.error ('###### CHECK RESPONSE '+str(response))
+            return 'ERROR'
+        if isinstance(retJson, (dict, list)):
+            if not Anon:
+                myJson = retJson['response']
+                try:
                     okcalls = myJson['ssuser']['requeststoday']
                     okmax = myJson['ssuser']['maxrequestsperday']
                     kocalls = myJson['ssuser']['requestskotoday']
@@ -770,26 +785,30 @@ def callAPI(URL, API, PARAMS, CURRSSID,Anon=False,Version='',tolog=''):
                     if int(okcalls) >= int(okmax) or int(kocalls) >= int(komax):
                         VTWOQUOTA = True
                         logging.debug('###### MAXIMUM DAILY QUOTA IS OVER')
-                        response = 'QUOTA'
+                        return 'QUOTA'
                     else:
                         VTWOQUOTA = False
-                return myJson
+                except Exception as e:
+                    logging.error ('###### ERROR IN GETTING INFORMATION FROM RESPONSE '+str(e))
             else:
-                data['Error'] = response
-            return json.loads(json.dumps(data))
-        except Exception as e:
-            data['Error'] = str(e)
-            #logging.debug ('###### RESPONSE '+str(e))
-            data['Response'] =str(response.encode('utf-8').decode('ascii','ignore'))
-            logging.error ('##### FAILED TO CALL API '+str(e))
-            if 'Error 431:' in str(e):
-                logging.debug ('####### SETTING QUOTA TO OVER')
-                VTWOQUOTA = True
-                data['Error'] = 'QUOTA'
-            else:
-                VTWOQUOTA = Anon
-                logging.debug ('####### SETTING QUOTA TO '+str(Anon))
-            retries = retries - 1
+                myJson = retJson['response']
+            return myJson
+        else:
+            data['Error'] = response
+        return json.loads(json.dumps(data))
+    
+    except Exception as e:
+        data['Error'] = str(e)
+        #logging.debug ('###### RESPONSE '+str(e))
+        data['Response'] =str(e) ##response.encode('utf-8').decode('ascii','ignore'))
+        logging.error ('##### FAILED TO CALL API '+str(e))
+        if 'Error 431:' in str(e) or 'Error 430:' in str(e):
+            logging.debug ('####### SETTING QUOTA TO OVER')
+            VTWOQUOTA = True
+            return 'QUOTA'
+        else:
+            VTWOQUOTA = False
+        return 'ERROR'
     return json.loads(json.dumps(data))
 
 
@@ -1102,12 +1121,16 @@ def getVideo(medialist, path, file, hash):
         destfile = path+'/videos/'+hash+'-video.mp4'
         if os.path.isfile(destfile):
             with open(destfile) as f:
+                logging.debug ('###### VIDEO FILE EXISTS ALREADY')
                 fileread = f.read()
                 if (('Votre quota de scrape est' in fileread) or ('API closed for non-registered members' in fileread) or ('Faite du tri dans vos fichiers roms et repassez demain !' in fileread)) or (os.stat(destfile).st_size < 10000):
                     if os.path.isfile(destfile):
+                        logging.debug ('###### BUT IS CORRUPT')
                         os.remove(destfile)
+                        logging.debug ('###### SO I DELETE AND REDOWNLOAD')
                     doVideoDownload(medialist,destfile)
         else:
+            logging.debug ('###### THERE IS NO VIDEO FILE PRESENT SO I DOWNLOAD')
             doVideoDownload(medialist,destfile)
     else:
         logging.debug ('###### MEDIALIST IS EMPTY')
@@ -1121,12 +1144,14 @@ def getMedia(medialist, path, file, hash,zipname):
         logging.debug('##### GRABBING FOR ' + file)
         destfile = path+'/images/'+hash+'-image.png'
         if os.path.isfile(destfile):
+            logging.debug ('###### MEDIA FILE ALREADY EXISTS')
             with open(destfile) as f:
                 fileread = f.read()
                 if ('API closed for non-registered members' in fileread or 'Faite du tri dans vos fichiers roms et repassez demain !' in fileread) or (os.stat(destfile).st_size < 3000):
                     if os.path.isfile(destfile):
+                        logging.debug ('###### BUT IS CORRUPT SO I DELETE IT')
                         os.remove(destfile)
-                        logging.debug ('###### GOING TO DOWNLOAD MEDIA')
+                        logging.debug ('###### GOING TO REDOWNLOAD MEDIA')
                         doMediaDownload(medialist,destfile,path,hash)
         else:
             logging.debug ('###### GOING TO DOWNLOAD MEDIA')
@@ -1595,9 +1620,7 @@ def processFile (path,file,CURRSSID,doRename,sysid):
     ### RETURN WHATEVER WE HAVE FOUND
     return file, gameinfo
 
-def grabData(system, path, CURRSSID, acceptedExtens):
-    ### WE'RE ABOUT TO PROCESS A SYSTEM
-    logging.debug ('###### GRAB DATA START')
+def getRomFiles(path,acceptedExtens):
     ### FIRST WE CHANGE DIRECTORY TO THE SYSTEM'S DIRECTORY
     try:
         os.chdir(path)
@@ -1605,11 +1628,6 @@ def grabData(system, path, CURRSSID, acceptedExtens):
         ### WE FAILED TO CHANGE DIRECTORY (SHOULDN'T HAPPEN BUT...)
         logging.error ('###### CANNOT CHANGE DIRECTORY TO '+path+ ' '+str(e))
         return 1
-    newfile = True
-    ### CREATE ROOT ELEMENT FOR GAMELIST
-    tree = ET.ElementTree()
-    ### CREATE GAMELIST ELEMENT
-    gamelist = ET.Element('gameList')
     try:
         ### CREATE SEARCH EXPRESSION FOR FILES, BASED ON EXTENSIONS, AGAIN ZIP IS ADDED BY DEFAULT, IN TIS CASE TO FACILITATE ITERATION
         schextensions = '**[.zip'
@@ -1626,6 +1644,17 @@ def grabData(system, path, CURRSSID, acceptedExtens):
         logging.error('###### THERE ARE NO FILES IN DIRECTORY ' + path + str(e))
         ### AND CREATE AN EMPTY LIST SO EXECUTION CARRIES ON
         filelist = []
+    return filelist
+
+def grabData(system, path, CURRSSID, acceptedExtens):
+    ### WE'RE ABOUT TO PROCESS A SYSTEM
+    logging.debug ('###### GRAB DATA START')
+    newfile = True
+    ### CREATE ROOT ELEMENT FOR GAMELIST
+    tree = ET.ElementTree()
+    ### CREATE GAMELIST ELEMENT
+    gamelist = ET.Element('gameList')
+    filelist = getRomFiles(path, acceptedExtens)
     ### ITERATE THROUGH EACH FILE
     for file in filelist:
         ### CREATE A PORCESS FILE VARIABLE SO WE KEEP THE INITIAL FILE VARIABLE QUIET
@@ -1730,7 +1759,32 @@ def deleteFromDB(sha1):
         return ''
     return ''
 
-def locateShainDB(mysha1):
+
+def newLocateRom(romsha,rommd5,romcrc):
+    ### TODO Objective si to grab the infromation from the gameRoms table and then capture the 
+    ### gameID and then get all the info reconsturcted as if it was a call to screenscraper
+    ### returning a response in JSON as screenscraper would do
+    sqlst = "select * from gameRoms gr where romsha1=%s or rommd5=%s romcrc =%s"
+    val = (romsha,rommd5,romcrc)
+    connected = False
+    while not connected:
+        try:
+            mycursor = mydb.cursor()
+            connected = True
+            logging.debug ('###### CONNECTED SUCCESFULLY')
+        except Exception as e:
+            logging.error ('###### CANNOT CONNECT TO DB - '+str(e))
+            logging.error ('###### WAITING AND RETRYING')
+            sleep(60)
+    try:
+        mycursor.execute(sqlst, val)
+        logging.debug('###### FOUND '+str(mycursor.rowcount)+' ROM Instances')
+        sys.exit()
+    except Exception as e:
+        logging.error ('###### CANNOT QUERY THE DB DUE TO ERROR - '+str(e))
+    sys.exit()
+
+def locateShainDB(mysha1='None',mymd5='None',mycrc='None',filename=''):
     result = ''
     logging.debug ('###### CONNECTING TO DB TO LOCATE DATA FOR '+mysha1)
     connected = False
@@ -1744,35 +1798,92 @@ def locateShainDB(mysha1):
             logging.error ('###### CANNOT CONNECT TO DB - '+str(e))
             logging.error ('###### WAITING AND RETRYING')
             sleep(60)
-    sql = "SELECT response FROM hashes WHERE hash = %s"
-    val = (mysha1, )
+    
+    ###### TODO: DB HAS CHANGED, SO I NEED TO UPDATE THIS PART
+    sql = "SELECT  CONCAT ( '{\"jeu\":{\"id\":\"',mygameid,'\",\"noms\":[',names_result,'],\"synopsis\":[',synopsis_result,']\n\
+            ,\"medias\":[',media_result ,'],',system_result,',',editor_result,',',date_result,'}}') as json\n\
+            FROM (SELECT gr.gameid as mygameid,\n\
+            GROUP_CONCAT(DISTINCT '{\"region\":\"',gn.region,'\",\"text\":\"',gn.`text`,'\"}') as names_result,\n\
+            GROUP_CONCAT(DISTINCT '{\"region\":\"',gs.langue,'\",\"text\":\"',gs.`text`,'\"}') as synopsis_result,\n\
+            GROUP_CONCAT(DISTINCT '{\"type\":\"',gm.`type`,'\",\"url\":\"',gm.url,'\",\"region\":\"',gm.region,'\",\"format\":\"',gm.`format`,'\"}') as media_result,\n\
+            GROUP_CONCAT(DISTINCT '\"systeme\":{\"id\":\"',sm.id,'\",\"text\":\"',sm.`text`,'\"}') as system_result,\n\
+            GROUP_CONCAT(DISTINCT '\"editeur\":{\"id\":\"',ed.id,'\",\"text\":\"',ed.`text`,'\"}') as editor_result,\n\
+            GROUP_CONCAT(DISTINCT '\"dates\":{\"region\":\"',gd.region ,'\",\"text\":\"',gd.`text`,'\"}') as date_result\n\
+            FROM gameRoms gr\n\
+            LEFT JOIN gameNames gn ON gn.gameid = gr.gameid\n\
+            LEFT JOIN gameSynopsis gs ON gs.gameid = gr.gameid\n\
+            LEFT JOIN gameMedias gm ON gm.gameid = gr.gameid\n\
+            LEFT JOIN games g2  on g2.id = gr.gameid\n\
+            LEFT JOIN systems sm on sm.id = g2.system\n\
+            LEFT JOIN editors ed on ed.id = g2.editeur\n\
+            LEFT JOIN gameDates gd on gd.id = gr.gameid where gr.romsha1 = %s or gr.rommd5 = %s or gr.romcrc =%s) as gameinfo"
+    val = (mysha1,mymd5,mycrc)
     connected = False
-    logging.debug ('###### TRYING TO QUERY DB')
+    logging.debug ('###### TRYING TO QUERY DB '+sql)
     try:
         mycursor.execute(sql, val)
+        logging.debug ('@@@@@@@@@@ '+str(mycursor.statement))
         if mycursor.rowcount == 0:
-            logging.debug ('###### NO DATA FOUND IN THE DB')
+            logging.debug ('###### NO DATA FOUND IN THE NEW DB')
             return ''
         else:
             result = mycursor.fetchall()
-            result = result[0][0].decode()
-            logging.debug ('###### FOUND MATCH IN DB')
+            logging.debug ('###### FOUND MATCH IN DB ')
+            ### I'M GOING TO CALL THE OLD DATABASE JUST IN CASE SO I CAN MIGRATE THIS ROM TO THE NEW DB
+            sql = 'SELECT response FROM hashes WHERE hash=%s'
+            val=(mysha1,)
+            try:
+                mycursor.execute(sql, val)
+                logging.debug ('@@@@@@@@@@ '+str(mycursor.statement))
+                if mycursor.rowcount == 0:
+                    logging.debug ('###### NOTHING WAS FOUND IN THE NEW DB')
+                    return ''
+                else:
+                    resulr = None
+                    result = mycursor.fetchall()
+                    result = result[0][0]
+                    if result == None:
+                        logging ('###### ACTUALLY NOTHING HAS BEEN FOUND, SO SKIPPING UPDATE')
+                    else:
+                        result = str(result).encode('utf-8')
+                        logging.debug ('###### WE DID FIND SOMETHING, MIGRATE TO NEW DB '+str(result))
+                        #### TODO INSERT
+                        try:
+                            logging.debug ('###### CONVERTING VIA JSON')
+                            myres = json.loads(result)
+                        except:
+                            logging.debug ('###### CONVERTING VIA AST')
+                            myres = ast.literal_eval(result)
+                        logging.debug ('###### CREATING ROM OBJECT')
+                        myRom={'romfilename':filename,'romsha1':mysha1,'romcrc':mycrc,'rommd5':mymd5,'beta':'0','demo':'0','proto':'0','trad':'0','hack':'0','unl':'0','alt':'0','best':'0','netplay':'0'}
+                        myRoms = [myRom]
+                        try:
+                            logging.debug ('###### GETTING GAME ID')
+                            gameid = myres['jeu']['id']
+                            logging.debug ('###### GOT '+str(gameid))
+                        except:
+                            logging.debug ('###### CANNOT, DEFAULTING TO 0')
+                            gameid = 0
+                        if gameid != 0:
+                            logging.debug ('###### TRYING TO INSERT IN NEW DB')
+                            insertGameRomsInDB(gameid,myRoms)
+                            logging.debug ('###### COULD INSERT IT - COMMITING')
+                            mydb.commit()
+                        return result
+            except Exception as e:
+                logging.error ('###### ERROR LOOKING IN OLD DB '+str(e))
+                return ''
+            if result[0][0] == None:
+                return ''
+            else:
+                return result[0][0].encode('utf-8')
+
+
+
     except Exception as e:
+        ###logging.debug ('@@@@@@@@@@ '+str(mycursor.statement))
         logging.error ('###### CANNOT QUERY THE DB DUE TO ERROR - '+str(e))
         return ''
-    try:
-        #logging.debug ('##### WHAT I GET FROM DB IS '+str(result))
-        logging.debug ('###### CONVERTING TO PYTHON DICTIONARY')
-        value = ast.literal_eval(result)
-    except Exception as e:
-        logging.error ('###### COULD NOT CONVERT DB RESULT '+str(result)+' TO JSON '+str(e))
-        return ''
-    if 'urlopen error' in str(value) or 'QUOTA' in str(value) or 'Faite du tri' in str(value):
-        ## Delete from DB
-        logging.debug ('###### DELETING RECORD FROM DB')
-        deleteFromDB(mysha1)
-        return ''
-    return value
 
 def updateDB(mysha1,response):
     logging.debug ('###### CALLED UPDATE DB WITH RESPONSE '+str(response))
@@ -1784,7 +1895,7 @@ def updateDB(mysha1,response):
        'Error 429:' in str(response) or 
        'Error 430:' in str(response) or 
        'Error 431:' in str(response) or 
-       'QUOTA' in str(response)):
+       response == 'QUOTA'):
         logging.debug ('###### GOT AN ERROR FROM API CALL SO I\'M NOT UPDATING THE DB HASH')
         return 
     if not 'urlopen error' in response:
@@ -1852,7 +1963,7 @@ def getGameInfo(CURRSSID, pathtofile, file, mymd5, mysha1, mycrc, sysid):
     ### INITIQLIZE VARIABLES TO AVOID ACRRY ON VALUES
     response = None
     ### FIRST, TRY TO GET THE ANSWER FRO THE DB, THIS IS DONE SO WE DO NOT CALL THE SCRAPER EVRYTIME IF WE HAVE ALREADY FETCHED INFORMATION FOR THIS PARTICULAR SHA
-    response = locateShainDB(mysha1)
+    response = locateShainDB(mysha1,mymd5,mycrc,file)
     ###logging.info ('######## '+str(response))
     ### DID WE SOMEHOW GOT AN EMPTY RESPONSE?
     if response !='':
@@ -1860,16 +1971,8 @@ def getGameInfo(CURRSSID, pathtofile, file, mymd5, mysha1, mycrc, sysid):
         ### THIS VARIABLE INDICATES IF WE NEED TO UPDATE THE DB OR NOT, BY DEFAULT WE DO
         doupdate = True
         ### CHECK IF WE HAVE A SYSTEM ID IN THE RESPONSE
-        if not 'systemeid' in response:
-            ### WE DIDN'T GET A SYSTEM ID, ADD IT
-            try:
-                ### DO IT
-                response['systemeid']=sysid
-            except:
-                ### SOMETHING DIDN'T WORK, ERROR IT
-                logging.error('###### COULD NOT ADD SYSID TO RESPONSE')
         ### DID WE GET A QUOTA LIMIT?
-        if 'QUOTA' in response:
+        if response == 'QUOTA':
             ### YES, SO RETURN TO SKIP THE FILE IF POSSIBLE
             loggign.info ('###### QUOTA LIMIT DONE RETURNED BY API')
             return file,'SKIP'
@@ -1885,6 +1988,8 @@ def getGameInfo(CURRSSID, pathtofile, file, mymd5, mysha1, mycrc, sysid):
             if not 'GameID' in response:
                 ### NO WE DON'T SO WE ADD IT AS 0 SO YOU CAN REPLACE IT AFTERWARDS IN THE DB
                 response['GameID']='0'
+                logging.debug ('###### SETTING DE FACTO SYSTEM ID')
+                response['systemeid']=int(sysid)
                 ### AND WE UPDATE THE DB WITH THE RESULT (REGARDLESS IF IT WAS IN THE DB OR NOT PREVIOUSLY)
                 updateDB (mysha1,response)
                 ### INFORM LOG THAT YOU COULD EVENTUALLY UPDATE GAMEID
@@ -1965,6 +2070,9 @@ def getGameInfo(CURRSSID, pathtofile, file, mymd5, mysha1, mycrc, sysid):
                 #logging.debug ('###### RESPONSE TO UPDATE '+str(response))
                 updateDB (mysha1,response)
                 return file,response
+        else:
+            logging.debug ('####### WE GOT AN OK RESPONSE SO RETURNING IT')
+            return file,response
     else:
         ### WE COULD NOT LOCATE THE SHA IN DB
         logging.error('###### CACHE DOES NOT EXISTE IN DB FOR ' + file)
@@ -1973,47 +2081,48 @@ def getGameInfo(CURRSSID, pathtofile, file, mymd5, mysha1, mycrc, sysid):
         response = None
         response = callAPI(fixedURL, API, params, CURRSSID,False,'2','NO SHA IN DB')
         ### ARE WE OVER THE QUOTA?
-        if 'QUOTA' in response:
+        if response == 'QUOTA':
             ## IMPOSSIBLE TO DO CALLS
             return file, 'SKIP'
         ### DID WE GET A PROPER ANSWER? (JEU)
-        if ('jeu' not in response):
+        logging.debug ('###### THE RESPONSE SO FAR '+str(response))
+        if response =='ERROR' :
             ### NO WE DID NOT, ADD LOCAL VALUES
-            response['file'] = pathtofile + '/' + file.replace("'","\\\'")
+            response = dict()
+            response['file'] = pathtofile.replace("'","\'")
             response['localhash'] = mysha1
             response['GameID'] = '0'
+            response['systemeid'] = '0'
             #logging.debug ('###### RESPONSE TO UPDATE '+str(response))
-            updateDB (mysha1,response)
+            ## TODO REMOVE COMMENT updateDB (mysha1,response)
         else:
             logging.debug ('###### GOT ANSWER FROM API, UPDATING DB')
             #logging.debug ('###### RESPONSE TO UPDATE '+str(response))
-            updateDB (mysha1,response)
+            ## TODO REMOVE updateDB (mysha1,response)
     ### SO NOW WE HAVE A RESPONSE, LET'S TREAT IT
     ### WE ASSUME THE ROM WAS NOT FOUND
     foundRom = False
     ### IS THERE AN ERROR IN RESPONSE?
     logging.debug ('###### RESPONSE IS '+str(response))
-    if 'QUOTA' in response:
+    if response == 'QUOTA':
         logging.error ('###### GONE OVER QUOTA')
         return file,'SKIP'
-    if 'Error' in response.keys():
-        if response['Error']=='ssuser':
-            loggin.debug ('###### IGNORING THIS ERROR')
-        else:
-            ### YES THERE IS
-            logging.debug('###### API GAVE ERROR BACK, CREATING EMPTY DATA '+str(response))
-            ### SO WE CREATE AN EMPTY ANSWER AND RETURN IT
-            return file,{'abspath': pathtofile,
-                    'localpath': pathtofile+'/'+file,
-                    'localhash': mysha1.upper(),
-                    'jeu':
-                    {
-                    'nom': file,
-                    'synopsis': '',
-                    'medias': '',
-                    'dates': ''
-                    }
-                    }
+    if response == 'ERROR':
+        ### YES THERE IS
+        logging.debug('###### API GAVE ERROR BACK, CREATING EMPTY DATA '+str(response))
+        ### SO WE CREATE AN EMPTY ANSWER AND RETURN IT
+        return file,{'abspath': pathtofile,
+                'localpath': pathtofile+'/'+file,
+                'localhash': mysha1.upper(),
+                'jeu':
+                {
+                'nom': file,
+                'synopsis': '',
+                'medias': '',
+                'dates': '',
+                'systemeid':'0'
+                }
+                }
     ## SO NOW WE HAVE A PROPER ANSER TO RETURN`, BUT WE ADD THE LOCAL VALUES
     response['localpath'] = pathtofile+'/'+escapeFileName(file)
     response['localhash'] = mysha1.upper()
@@ -2021,8 +2130,81 @@ def getGameInfo(CURRSSID, pathtofile, file, mymd5, mysha1, mycrc, sysid):
     ### AND RETURN IT
     return file,response
 
+def getSystemName (sysid):
+    logging.debug ('###### GOING TO GRAB SYSTEM NAME FROM LOCALDB')
+    sql = 'SELECT `text` FROM systems WHERE id = %s'
+    val = (sysid,)
+    mycursor = mydb.cursor()
+    try:
+        mycursor.execute(sql,val)
+        result =  mycursor.fetchall()[0][0]
+    except Exception as e:
+        logging.error ('###### COULD NOT QUERY DB, ERROR '+str(e))
+        result = None
+    logging.debug('###### FOUND '+str(result))
+    return result
 
-def scrapeRoms(CURRSSID):
+
+def getSystemForRom(rom,sysid):
+    file,romInfo = getGameInfo(CURRSSID,rom,rom[rom.rindex('/')+1:],md5(rom),sha1(rom),crc(rom),sysid)
+    logging.debug ('###### RETURN FROM ROM INFO '+str(type(romInfo)))
+    try:
+        romInfo=ast.literal_eval(romInfo)
+    except:
+        logging.error ('###### CANNOT CONVERT TO DICT')
+    if romInfo :
+        logging.debug ('###### WE CAN PROCESS THE ROM INFO')
+        try:
+            mysisid = romInfo['jeu']['systemeid']
+        except:
+            logging.debug ('####### JEU/SYSID NOT FOUND')
+            try:
+                mysisid = romInfo['systemeid']
+            except:
+                logging.debug ('####### SYSID NOT FOUND EITHER, DEFAULTING TO ZERO')
+                mysisid = 0
+
+        return getSystemName(mysisid)
+    else:
+        return None
+
+def copyRoms (systemid,systemname,path,CURRSSID,extensions,outdir):
+    ### COPY ROMS FOR SYSTEM ID IN PATH TO OUTDIR WITH NEW PATH AS SYSTEM WHERE THE ROM BELONGS TO
+    if outdir[-1:] != '/':
+        outdir = ourdir + '/'
+    logging.info ('###### GOING TO COPY TO DIRECTORY '+outdir)
+    logging.debug ('###### GOING TO GET FILE LIST FOR PATH')
+    filelist = getRomFiles(path,extensions)
+    logging.debug ('###### GOING TO ITERATE THROUGH FILES AND SEE WHERE THEY BELONG')
+    if path[-1:] != '/':
+        path = path + '/'
+    for file in filelist:
+        logging.debug ('####### GOING TO PROCESS SORT FOR FILE '+file)
+        romSys = getSystemForRom(path+file,systemid)
+        logging.debug ('###### SYSTEM FOR ROM IS '+str(romSys))
+        if romSys:
+            origfile = path+file
+            destfile = outdir+romSys.lower().replace(' ','')+'/'+file
+            logging.debug ('###### GOING TO COPY ROM '+origfile+' TO '+destfile)
+            destpath = destfile[:destfile.rindex('/')]
+            if not os.path.isdir(destpath):
+                os.mkdir(destpath)
+            try:
+                if (not os.path.isfile(destfile)):
+                    copyfile(origfile,destfile)
+                else:
+                    if (os.stat(origfile).st_size != os.stat(destfile).st_size):
+                        copyfile(origfile,destfile)
+                    else:
+                        logging.info ('###### FILE '+destfile+' ALREADY EXISTS')
+            except Exception as e:
+                logging.error ('####### COULD NOT COPY '+origfile+' DUE TO '+str(e))
+        else:
+            logging.error ('###### FAILED TO COPY ROM '+origfile+' TO DESTINATION')
+    return ''
+
+
+def scrapeRoms(CURRSSID,sortRoms=False,outdir=''):
     ### OPEN SYSTEM CONFIGURATION
     with open(sysconfig, 'r') as xml_file:
         tree = ET.ElementTree()
@@ -2044,6 +2226,7 @@ def scrapeRoms(CURRSSID):
             if 'sskip' not in child.attrib:
                 ### GIVE A DEFAULT SYSTEM ID
                 systemid = '000'
+                systemname = 'unknown'
                 ### INITIALIZE VARIABLE
                 path = ''
                 ### INITIALIZE VARIABLE
@@ -2073,6 +2256,7 @@ def scrapeRoms(CURRSSID):
                             if sysname.upper()==mysystem['noms'][apisysname].upper():
                                 ### WE FOUND A MATCH SO WE ASSIGN A SYSTEM ID
                                 systemid = str(mysystem['id'])
+                                systemname = mysystem['noms']
                                 logging.info ('###### FOUND ID '+systemid+' FOR SYSTEM '+sysname)
                                 ### AND WE SKIP
                                 continue
@@ -2090,7 +2274,10 @@ def scrapeRoms(CURRSSID):
                         os.mkdir(path + '/videos')
                     logging.info ('###### DOING SYSTEM ' + str(path)+ ' looking for extensions '+str(extensions))
                     ### SO WE START WITH THE SYSTEM PROCESSING
-                    grabData(systemid, path, CURRSSID,extensions)
+                    if sortRoms :
+                        copyRoms (systemid,systemname,path,CURRSSID,extensions,outdir)
+                    else:
+                        grabData(systemid, path, CURRSSID,extensions)
                     ### WE GO TO NEXT USER INFO
                     CURRSSID = CURRSSID + 1
                     if CURRSSID == len(config.ssid):
@@ -2452,7 +2639,9 @@ def findMissing():
                             if len(returnValue['jeux']) > 1:
                                 position = 0
                                 for game in returnValue['jeux']:
+                                    logging.debug ('###### TRYING WITH GAME IN POSITION ['+str(position)+'] OF ['+str(len(returnValue['jeux']))+']')
                                     thisGameID = returnValue['jeux'][position]['id']
+                                    
                                     if gameNameMatches(myGameName,game):
                                         if isSystemOk(game['systeme']['id'],str(system)):
                                             updateGameID (row[1],sha,thisGameID)
@@ -2465,9 +2654,9 @@ def findMissing():
                                             if isSystemOk(game['systeme']['id'],str(system)):
                                                 newline = newline + '|' + gameName['text']
                                                 newline = newline + '|' + thisGameID
-                                                position = position+1
                                             else:
                                                 logging.debug ('###### RETURNED VALUE NOT OF SAME SYSTEM')
+                                    position = position + 1
  
                             else:
                                 if str(returnValue['jeux'][0]) != '{}':
@@ -2639,6 +2828,14 @@ def updateFile(path,localSHA,localCRC,localMD):
                 except:
                     res = updateDBFile(destFile,path)
 
+
+def lookUpROMinDB (romsha1,romcrc,rommd5):
+    ### LOOKUP ROM IN DB FIRST
+    sqlst = 'select gameid from gameRoms gr where romsha1 = "'+romsha1+'" or romcrc = "'+romcrc+'" or rommd5 ="'+rommd5+'"'
+    results = executeSQL(sqlst)
+    logging.debug ('###### RESULT FROM DB QUERY LOOKUP ROM '+str(results))
+    sys.exit()
+
 def renameFiles():
     logging.info ('###### - STARTING FILE RENAMING PROCESS')
     ### Exclude directories, or directories where you do not wish to rename files (retropie, etc..)
@@ -2675,6 +2872,187 @@ def renameFiles():
             deleteHashFromDB (thisfile)
     logging.info ('###### - FINISHED FILE RENAMING PROCESS - TOTAL FILES PROCESSED '+str(procfiles))
 
+def executeSQL(sqlst):
+    logging.debug('###### SQL '+sqlst)
+    result = None
+    mycursor = mydb.cursor()
+    try:
+        if 'SELECT' in sqlst:
+            logging.debug('###### IS SELECT ')
+            mycursor.execute(sqlst)
+            result =  mycursor.fetchall()
+        else:
+            logging.debug('###### IT IS NOT SELECT ')
+            mycursor.execute(sqlst)
+            result = True
+            logging.info ('###### DB UPDATED OK')
+    except Exception as e:
+        logging.error ('###### COULD NOT EXECUTE SQL '+sqlst+' IN DB ' +str(e))
+        result = None
+    return result
+
+def insertDataInLocalDB(obj,table):
+    sqlst= 'INSERT INTO '+table+' '
+    columns = ''
+    values = ''
+    for key in obj.keys():
+        columns = columns + str(key) + ','
+        values = values + str(obj[key]) +','
+    columns = '('+columns[:-1]+')'    
+    values  = '('+values[:-1]+')'    
+        ## TODO CREATE SQL AND INSERT
+    sqlst = sqlst+columns+' VALUES '+values
+    logging.debug ('####### SQL STATEMENT GENERATED '+sqlst)
+    executeSQL(sqlst)
+
+def insertSystemInLocalDb(system):
+    sqlst = 'SELECT id FROM systems WHERE id = '+str(system['id'])
+    result = executeSQL (sqlst)
+    logging.debug ('###### SQL RESULT FROM EDITORS EQUALS '+str(result))
+    if (not result):
+        logging.info ('###### GOING TO UPDATE EDITORS TABLE')
+ 	sqlst = 'INSERT INTO systems (id,text) values ('+str(system['id'])+',"'+system['noms']['nom_eu']+'")'
+        executeSQL (sqlst)
+
+def insertEditorInLocalDb(edid,edname):
+    sqlst = 'SELECT text FROM editors WHERE id = '+str(edid)
+    result = executeSQL (sqlst)
+    logging.debug ('###### SQL RESULT FROM EDITORS EQUALS '+str(result))
+    if (not result):
+        logging.info ('###### GOING TO UPDATE EDITORS TABLE')
+        if len(edname) >  100:
+	    edname = edname[:99]
+        sqlst = 'INSERT INTO editors (id,text) values ('+str(edid)+',"'+edname+'")'
+        executeSQL (sqlst)
+
+def insertGameNamesInDB(id,names):
+    for name in names:
+        sqlst = 'INSERT INTO gameNames (gameid,region,text) VALUES ('+str(id)+',"'+name['region']+'","'+name['text']+'")'
+        executeSQL(sqlst)
+
+def insertSynopsisInDB(id,synopsis):
+    for syn in synopsis:
+        sqlst = 'INSERT INTO gameSynopsis (gameid,langue,text) VALUES ('+str(id)+',"'+syn['langue']+'","'+syn['text']+'")'
+        executeSQL(sqlst)
+
+def insertGameRomsInDB(id,roms):
+    logging.debug ('###### INSERTIMG ROMS IN DB')
+    for rom in roms:
+        sqlst = 'INSERT INTO gameRoms (romfilename,romsha1,romcrc,rommd5,beta,demo,proto,trad,hack,unl,alt,best,netplay,gameid) VALUES ('
+        sqlst = sqlst + '"' +rom['romfilename']+ '",'
+        sqlst = sqlst + '"' +rom['romsha1']+ '",'
+        sqlst = sqlst + '"' +rom['romcrc']+ '",'
+        sqlst = sqlst + '"' +rom['rommd5']+ '",'
+        sqlst = sqlst + str(rom['beta'])+","
+        sqlst = sqlst + str(rom['demo'])+","
+        sqlst = sqlst + str(rom['proto'])+","
+        sqlst = sqlst + str(rom['trad'])+","
+        sqlst = sqlst + str(rom['hack'])+","
+        sqlst = sqlst + str(rom['unl'])+","
+        sqlst = sqlst + str(rom['alt'])+","
+        sqlst = sqlst + str(rom['best'])+","
+        sqlst = sqlst + str(rom['netplay'])+","
+        sqlst = sqlst + str(id)+")"
+        logging.debug ('###### GOING TO EXECUTE SQL')
+        executeSQL(sqlst)
+
+def insertGameMediasInDB(id,medias):
+    counter = 0
+    for media in medias:
+        sqlst = 'INSERT INTO gameMedias (type,url,region,format,cnt,gameid) VALUES ('
+        sqlst = sqlst + '"' +media['type']+ '",'
+        sqlst = sqlst + '"' +media['url']+ '",'
+        try:
+            sqlst = sqlst + '"' +media['region']+ '",'
+        except:
+            sqlst = sqlst + '"UNK",'
+        sqlst = sqlst + '"' +media['format']+ '",'
+        sqlst = sqlst + str(counter)+","
+        sqlst = sqlst + str(gameid)+")"
+        executeSQL(sqlst)
+        counter = counter + 1
+
+def insertGameDatesInDB(id,dates):
+    for rdate in dates:
+        sqlst = 'INSERT INTO gameDates (text,region,gameid) VALUES ('
+        sqlst = sqlst + '"' +rdate['text']+ '",'
+        sqlst = sqlst + '"' +rdate['region']+ '",'
+        sqlst = sqlst + str(gameid)+")"
+        executeSQL(sqlst)
+
+
+
+def insertGameInLocalDb(gameInfo):
+    logging.debug ('###### GAMEINFO IS ')###+ str(gameInfo))
+    game = dict()
+    try:
+        game['id'] = gameInfo['id']
+    except Exception as e:
+        logging.error ('###### THERE IS NO GAME ID!, CANNOT DO ANYTHING')
+        return
+    try:
+        game['notgame'] = gameInfo['notgame']
+    except Exception as e:
+        logging.error ('###### ATTRIBUTE '+str(e)+' NOT FOUND, CREATING DEFAULT FOR '+str(game['id']))
+        game['notgame'] = False
+    try:
+        game['topstaff'] = gameInfo['topstaff']
+        if game['topstaff'] == None:
+            game['topstaff'] = 0
+    except Exception as e:
+        logging.error ('###### ATTRIBUTE '+str(e)+' NOT FOUND, CREATING DEFAULT FOR '+str(game['id']))
+        game['topstaff'] = 0
+    try:
+        game['rotation'] = gameInfo['rotation']
+        if game['rotation'] == None:
+            game['rotation'] = 0
+    except Exception as e:
+        logging.error ('###### ATTRIBUTE '+str(e)+' NOT FOUND, CREATING DEFAULT FOR '+str(game['id']))
+        game['rotation'] = 0
+    try:
+        game['system'] = gameInfo['systeme']['id']
+    except Exception as e:
+        try:
+            game['system'] = gameInfo['systemeid']
+        except Exception as e:
+            logging.error ('###### ATTRIBUTE '+str(e)+' NOT FOUND, CREATING DEFAULT FOR '+str(game['id']))
+            game['system'] = 0
+    try:
+        game['editeur'] = gameInfo['editeur']['id']
+        insertEditorInLocalDb(game['editeur'],gameInfo['editeur']['text'])
+    except Exception as e:
+        logging.error ('###### ATTRIBUTE '+str(e)+' NOT FOUND, CREATING DEFAULT FOR '+str(game['id']))
+        game['editeur'] = 0
+        insertEditorInLocalDb(game['editeur'],'Unknown')
+    logging.debug ('###### GAME INFO IS '+str(game))
+    insertDataInLocalDB(game,'games')
+    try:
+        insertGameNamesInDB(game['id'],gameInfo['noms'])
+    except:
+        logging.error ('###### COULD NOT FIND NAMES FOR THE GAME')
+    try:
+        insertSynopsisInDB(game['id'],gameInfo['synopsis'])
+    except:
+        logging.error ('###### COULD NOT FIND SYNOPSIS FOR THE GAME')
+    try:
+        insertGameRomsInDB(game['id'],  gameInfo['roms'])
+    except:
+        logging.error ('###### COULD NOT FIND ROMS FOR THE GAME')
+    try:
+        insertGameMediasInDB(game['id'],  gameInfo['medias'])
+    except:
+        logging.error ('###### COULD NOT FIND MEDIAS FOR THE GAME')
+    try:
+        insertGameDatesInDB(game['id'],  gameInfo['dates'])
+    except:
+        logging.error ('###### COULD NOT FIND DATES FOR THE GAME')
+    return
+
+
+def sortRoms(mainDir):
+    logging.info ('###### STARTING ROM SORTING PROCESS, ORIGINAL ROMS WILL REMAIN UNTOUCHED')
+    scrapeRoms(CURRSSID,True,mainDir)
+    return ''
 
 if dbRename:
     ### Get all games from DB and rename filenames
@@ -2683,22 +3061,75 @@ if dbRename:
     sys.exit(0)
 
 
-if cleanSystem !='':
+if cleanSystem:
     ### CLEAN SYSTEM, THIS PROCEDURE DELETES ALL DB RECORDS FOR FILES FOUND IN GAMELIST FOR A GIVEN SYSTEM
     cleanSys(cleanSystem)
     sys.exit(0)
-    
+
 if missing !='':
     ### FIND MISSING FILES FROM MISSING FILES
     ### THIS PROCEDURE OPENS A CSV FILE CONTAINING SYSTEM_ID,FILENAME,SHA,MD5,CRC
     ### IT WILL THEN TRY TO MATCH FILENAMES WITH GAME NAMES AND ADD GAME_ID IF FOUND TO DB
     findMissing()
     logging.info ('###### FINSHED LOOKING FOR MISSING GAMES')
-    sys.exit(0)
+    ##sys.exit(0)
     scrapeRoms(CURRSSID)
 
-else:
-    ### THIS PROCEDURE WILL GO THROUGH ALL ROMS DIRECTORIES IN SYSTEM CONFIGURATION AND TRY TO SCRAPE THEM
+if sortroms !='':
+    ### SORT YOUR ROMS, IT WILL TAKE YOUR PARAMETER AS DESTINATION DIRECTORY AND CREATE A STRUCTURE
+    ### BASED ON THE SYSTEM THE ROM BELONGS TO
+    logging.info ('###### GOING TO SORT YOUR ROMS')
+    sortRoms(sortroms)
+    logging.info ('###### FINSHED SORTING YOUR ROMS')
+    ##sys.exit(0)
     scrapeRoms(CURRSSID)
+
+if migrateDB:
+    ###populate systems
+    cnt=1
+    systems = getAllSystems(0)
+    for system in systems:
+        logging.debug ('###### SYSTEM '+str(system))
+        insertSystemInLocalDb (system)    
+    ### first import all games into local DB
+    anon = True
+    anonquota = False
+    maxssid = len(config.ssid)
+    currssid = 0
+    gameid = int(startid)
+    params =dict(fixParams)
+    numGames = 276000
+    response = 'QUOTA'
+    while gameid <= numGames:
+        params['gameid'] = str(gameid)
+        while response == 'QUOTA':
+            response = callAPI(fixedURL,'jeuInfos',params,currssid,anon,'2','MIGRATE DB AS ANON '+str(anon))
+            if response == 'QUOTA':
+                if anon:
+                    anonquota = True
+                anon = not anon
+            else:
+                anon = not anonquota
+            False
+        logging.debug ('####### RESPONSE FROM API CALL ')###+str(response))
+        ### TODO : INSERT INFORMATION IN DB
+        if response != 'ERROR':
+            insertGameInLocalDb(response['jeu'])
+        if cnt == 50:
+	        mydb.commit()
+	        cnt = 0
+	cnt = cnt + 1
+        logging.error ('###### DONE GAME '+str(gameid))
+	gameid = gameid + 1
+        response = 'QUOTA'
+        currssid = currssid + 1
+        if currssid == maxssid:
+            currssid = 0
+    ## Now all games have been imported into local DB
+
+## Default behaviour
+
+scrapeRoms(CURRSSID)
 
 sys.exit(0)
+

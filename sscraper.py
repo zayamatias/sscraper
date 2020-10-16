@@ -256,18 +256,8 @@ def getGameName(jsondata,path):
 def updateInDBV2Call(api,params,response):
     logging.debug ('###### INSIDE INSERT INTO DB FOR V2 CALL '+str(params))
     ### Update the DB with the call to V2
-    if ('Error 400:' in str(response) or 
-       'Error 401:' in str(response) or 
-       'Error 403:' in str(response) or 
-       'Error 423:' in str(response) or 
-       'Error 426:' in str(response) or 
-       'Error 429:' in str(response) or 
-       'Error 430:' in str(response) or 
-       'Error 431:' in str(response) or 
-       response == 'QUOTA'  or
-       params == 'output=jsongameid=1'):
+    if response == 'ERROR' or response =='QUOTA':
         ### Gameid=1 is added to the non caching criteria to avoid being there when quota is over and checking 
-        ### TODO VERIFY POSSIBILITY OF PASSING FALSE
         logging.error ('###### GOT AN ERROR FROM API CALL SO NOT UPDATING V2 DB '+response)
         return True
     result = ''
@@ -276,7 +266,7 @@ def updateInDBV2Call(api,params,response):
     while not connected:
         logging.debug ('###### TRYING TO CONNECT')
         try:
-            mycursor = mydb.cursor()
+            mycursor = mydb.cursor(buffered=True)
             connected = True
             logging.debug ('###### CONNECTED SUCCESFULLY')
         except Exception as e:
@@ -316,7 +306,7 @@ def searchInDBV2Call(api,params):
     while not connected:
         logging.debug ('###### TRYING TO CONNECT')
         try:
-            mycursor = mydb.cursor()
+            mycursor = mydb.cursor(buffered=True)
             connected = True
             logging.debug ('###### CONNECTED SUCCESFULLY')
         except Exception as e:
@@ -343,6 +333,75 @@ def searchInDBV2Call(api,params):
         return None
     return None
 
+def parsePossibleErrors(response):
+    ## GENERIC ERROR PARSE FOR API CALLS, RETURNS A SHORT ERROR OR SAME RESPONSE DEPENDING
+    ## ON CONTENTS
+    if 'Error 401:' in response or 'Error 431:' in response or 'Error 430:' in response:
+        logging.debug ('###### GOT A 43x ERROR (QUOTA) '+str(response)) 
+        response = 'QUOTA'
+    if ('Error 400:' in response or 
+        'Error 403:' in response or 
+        'Error 423:' in response or 
+        'Error 429:' in response or 
+        'Error 426:' in response):
+        logging.debug ('###### GOT A CALL ERROR '+str(response)) 
+        response = 'FAILED'
+    if 'Error 404:' in response:
+        logging.debug ('###### GOT A NOT FOUND ERROR '+str(response))
+        response = 'NOT FOUND' 
+    if 'Error 5' in response:
+        logging.error ('###### THERE IS A SERVER ERROR '+str(response))
+        response = 'FAILED'
+    return response
+
+def getV2CallInfo(URL):
+    logging.debug ('###### THIS IS A V2 CALL ')
+    ### It is a V2 call try to get parameters
+    params = re.finditer('[\?|&]\S[^&]*',URL)
+    logging.debug ('###### PARAMS ARE '+str(params))
+    dbparams = ''
+    excludeparams = ['devpassword','ssid','devid','softname','sspassword']
+    if params:   
+        logging.debug ('###### FOUND PARAMS '+str(params))
+        for param in params:
+            mypar = param.group(0)
+            ## Exclude non essential params from query
+            chkparam = mypar[1:mypar.index('=')]
+            logging.debug ('###### CHECKING PARAMETER '+chkparam)
+            if not chkparam in excludeparams:
+                dbparams=dbparams+mypar[1:]
+            else:
+                logging.debug('###### PARAMETER '+chkparam+' IN EXCLUDE LIST')
+        #### Search in DB
+        apiname = URL[URL.lower().rindex('api2/')+5:URL.lower().index('?')]
+        logging.debug ('###### CALLED API '+apiname)
+        logging.debug ('###### PARAMETERS '+dbparams)
+    return apiname,dbparams
+
+def getV2CallFromDB(URL):
+    apiname,dbparams = getV2CallInfo(URL)
+    response = searchInDBV2Call(apiname,dbparams)
+    logging.debug ('###### AFTER SEARCH IN DB')
+    if response:
+        logging.debug ('###### RETURNING RESPONSE')
+        return response
+    else:
+        logging.debug ('###### DID NOT FIND V2 ANSWER IN DB')
+        return ''
+
+def doV2URLRequest(URL):
+    request = urllib2.Request(URL)
+    logging.debug ('####### CONVERTED URL TO ANONYMOUS ')
+    response = ''
+    try:
+        response = urllib2.urlopen(request,timeout=60).read()
+    except Exception as e:
+        logging.error ('###### ERROR IN CALLING URL '+str(e))
+        response = str(e)
+    response = parsePossibleErrors(response)
+    return response
+
+
 def callAPIURL(URL):
     #### ACTUAL CALL TO THE API
     ## Check if it is a v2 Call first
@@ -352,59 +411,48 @@ def callAPIURL(URL):
     v2 = re.search('\/[a|A][P|p][i|I]2\/',URL)
     logging.debug('###### IS V2 '+str(v2))
     if v2:
-        logging.debug ('###### THIS IS A V2 CALL ')
-        ### It is a V2 call try to get parameters
-        params = re.finditer('[\?|&]\S[^&]*',URL)
-        logging.debug ('###### PARAMS ARE '+str(params))
-        dbparams = ''
-        excludeparams = ['devpassword','ssid','devid','softname','sspassword']
-        if params:   
-            logging.debug ('###### FOUND PARAMS '+str(params))
-            for param in params:
-                mypar = param.group(0)
-                ## Exclude non essential params from query
-                chkparam = mypar[1:mypar.index('=')]
-                logging.debug ('###### CHECKING PARAMETER '+chkparam)
-                if not chkparam in excludeparams:
-                    dbparams=dbparams+mypar[1:]
-                else:
-                    logging.debug('###### PARAMETER '+chkparam+' IN EXCLUDE LIST')
-            #### Search in DB
-            apiname = URL[URL.lower().rindex('api2/')+5:URL.lower().index('?')]
-            logging.debug ('###### CALLED API '+apiname)
-            logging.debug ('###### PARAMETERS '+dbparams)
-            response = searchInDBV2Call(apiname,dbparams)
-            logging.debug ('###### AFTER SEARCH IN DB')
-            if response:
-                logging.debug ('###### RETURNING RESPONSE')
-                return response
-            else:
-                logging.debug ('###### DID NOT FIND V2 ANSWER IN DB')
-    request = urllib2.Request(URL)
-    try:
-        logging.debug ('###### ACTUALLY CALLING THE URL '+URL)
-        response = urllib2.urlopen(request,timeout=20).read()
-        logging.debug ('###### DECODING RESPONSE')
-        response = response.decode('utf-8').encode('ascii','replace') ### DO NOT TOUCH
-        try:
-            retJson = json.loads(response)
-        except:
-            logging.debug ('###### THE RETURN JSON WHEN CALLED API IS NOT VALID, WILL TRY TO FIX')
-            err = response.rfind ('],')
-            new_response = response[:err] + "]" + response[err+2:]
-            response = new_response
-    except Exception as e:
-        logging.error ('###### ERROR IN CALLING URL '+str(e))
-        response = str(e)
-    logging.debug ('####### GOT A RESPONSE AFTER CALLING URL')
-    if 'Error 401:' in response or 'Error 431:' in response or 'Error 430:' in response:
-        logging.debug ('###### GOT A 43x ERROR (QUOTA)')
-        return 'QUOTA' 
+        response = getV2CallFromDB(URL)
     else:
-        if v2 and apiname !='' and response!='':
-            logging.debug ('###### GOING TO UPDATE CACHE IN DB FOR V2')
-            updateInDBV2Call(apiname,dbparams,response)
+        logging.debug ('###### V1 CALLS ARE OVER, CHECK WHY YOU WANT TO CALL THIS '+str(URL))
+        return 'ERROR'
+    if response != '':
         return response
+    logging.debug ('###### THERE WAS NO RESPONSE FROM DB SO I MIGHT AS WELL CALL THE API')
+    successCall = False
+    while not successCall:
+        ### A BIT OF ORDER AND LOGIC HERE:
+        ### FIRST WE TRY CALLING ANONYMOUS, IF ANON CALL IS NOT POSSIBLE
+        ### WE TRY CALLING WITH ACCOUNT
+        ### -------------------------------------------------
+        ### CONVERT URL TO ANON AND CALL IT
+        anonURL = re.sub(r"&ssid=\w*","&ssid=",URL)
+        response = doV2URLRequest(anonURL)
+        if response == 'FAILED' or response == 'QUOTA':
+            logging.denug ('###### FAILED TO CALL AS ANON, WILL RETRY AS IDENTIFIED')
+            response = doV2URLRequest(URL)
+        if response != 'FAILED' and response != 'QUOTA' and response != 'NOT FOUND':
+            successCall = True
+            logging.debug ('###### DECODING RESPONSE')
+            response = response.decode('utf-8').encode('ascii','replace') ### DO NOT TOUCH
+            try:
+                retJson = json.loads(response)
+            except:
+                logging.debug ('###### THE RETURN JSON WHEN CALLED API IS NOT VALID, WILL TRY TO FIX')
+                err = response.rfind ('],')
+                new_response = response[:err] + "]" + response[err+2:]
+                response = new_response
+            if v2 and apiname !='' and response!='':
+                logging.debug ('###### GOING TO UPDATE CACHE IN DB FOR V2')
+                apiname,dbparams = getV2CallInfo(URL)
+                updateInDBV2Call(apiname,dbparams,response)
+        else:
+            if response == 'QUOTA':
+                logging.debug ('###### WE GOT QUOTA ERROR FOR ANON AND IDENTIFIED - WE CANNOT CONTINUE - WAIT 10 MINS TO RETRY')
+                time.sleep (600)
+            if response == 'NOT FOUND':
+                logging.debug ('###### ROM HAS NOT BE FOUND, RETURN THIS INFORMATION TO CALLER')
+                successCall=True
+    return response
 
 def isMissing(json,file):
     ### THIS FUNCTION WILL CHECK IF WE CAN CONSIDER FILE AS MISSING FROM THE SCRAPER SITE
@@ -715,22 +763,10 @@ def callAPI(URL, API, PARAMS, CURRSSID,Anon=False,Version='',tolog=''):
     PARAMS.pop('md5',None)
     PARAMS.pop('crc',None)   
     global VTWOQUOTA
-    if Version=='2' and VTWOQUOTA and not Anon:
-        logging.info ('###### DAILY QUOTA HAS BEEN EXCEEDED FOR V2 API - CANNOT CALL IT FOR NOW - GOING ANON')
-        Anon = True
+    if Version=='2' and VTWOQUOTA:
+        logging.info ('###### DAILY QUOTA HAS BEEN EXCEEDED FOR V2 API - CANNOT CALL IT FOR NOW ')
         return 'QUOTA'
     logging.debug ('###### CALLING API WITH EXTRA '+tolog)
-    ### FNCTION THAT ACTUALLY DOES THE CALL TO THE API
-    retries = 10
-    ### IS IT AN ANONYMOUS CALL
-    if not Anon:
-        ### NO IT IS NOT, ADD USER PARAMETERS
-       logging.debug ('##### CALLING API AS NOT ANONYMOUS')
-       PARAMS['ssid'] = config.ssid[CURRSSID]
-    else:
-        ### IT IS, USER PARAMETER IS EMPTY
-        logging.debug ('##### CALLING API AS ANONYMOUS')
-        PARAMS['ssid'] = ''
     ### BUILD QUERY
     url_values = urllib.urlencode(PARAMS)
     API = Version+'/'+API+".php"
@@ -742,74 +778,52 @@ def callAPI(URL, API, PARAMS, CURRSSID,Anon=False,Version='',tolog=''):
     logging.debug ('##### ACTUAL CALL TO API '+API)
     data = {}
     retJson = None
-    try:
-        logging.debug ('###### GOING TO CALL API URL')
-        response = callAPIURL(callURL)
-        logging.debug ('###### CALLED API URL')
-        if response == 'QUOTA':
-            if not Anon:
-                logging.info ('###### YOUR SCRAPING QUOTA FOR V2 IS OVER FOR TODAY')
-                VTWOQUOTA = True
-                return 'QUOTA'
-            else:
-                logging.info ('###### YOUR ANON SCRAPING QUOTA FOR V2 IS OVER FOR TODAY')
-                VTWOQUOTA = False
-                return 'QUOTA'
-        else:
-            logging.debug ('###### QUOTA IS NOT IN RESPONSE OR WE ARE')
-            VTWOQUOTA = False
-        logging.debug ('###### CHECKING IF "{" IN RESPONSE')
-        if '{' in response:
-            logging.debug ('###### YES THERE IS { IN RESPONSE')
-            a = '{'+response.split('{', 1)[1]
-            response = a.rsplit('}', 1)[0] + '}'
-            try:
-                retJson = json.loads(response)
-            except:
-                logging.debug ('###### THE RETURN JSON IS NOT VALID, WILL TRY TO FIX')
-                err = response.rfind ('],')
-                new_response = response[:err] + "]" + response[err+2:]
-                retJson = json.loads(new_response)
-        else:
-            logging.error ('###### CHECK RESPONSE '+str(response))
-            return 'ERROR'
-        if isinstance(retJson, (dict, list)):
-            if not Anon:
-                myJson = retJson['response']
-                try:
-                    okcalls = myJson['ssuser']['requeststoday']
-                    okmax = myJson['ssuser']['maxrequestsperday']
-                    kocalls = myJson['ssuser']['requestskotoday']
-                    komax = myJson['ssuser']['maxrequestskoperday']
-                    logging.debug ('###### V2 QUOTA INFO - OK CALLS '+str(okcalls)+' KO CALLS '+str(kocalls)+' OK MAX '+str(okmax)+' KO MAX '+str(komax))
-                    if int(okcalls) >= int(okmax) or int(kocalls) >= int(komax):
-                        VTWOQUOTA = True
-                        logging.debug('###### MAXIMUM DAILY QUOTA IS OVER')
-                        return 'QUOTA'
-                    else:
-                        VTWOQUOTA = False
-                except Exception as e:
-                    logging.error ('###### ERROR IN GETTING INFORMATION FROM RESPONSE '+str(e))
-            else:
-                myJson = retJson['response']
-            return myJson
-        else:
-            data['Error'] = response
-        return json.loads(json.dumps(data))
-    
-    except Exception as e:
-        data['Error'] = str(e)
-        #logging.debug ('###### RESPONSE '+str(e))
-        data['Response'] =str(e) ##response.encode('utf-8').decode('ascii','ignore'))
-        logging.error ('##### FAILED TO CALL API '+str(e))
-        if 'Error 431:' in str(e) or 'Error 430:' in str(e):
-            logging.debug ('####### SETTING QUOTA TO OVER')
-            VTWOQUOTA = True
-            return 'QUOTA'
-        else:
-            VTWOQUOTA = False
+    logging.debug ('###### GOING TO CALL API URL')
+    response = callAPIURL(callURL)
+    logging.debug ('###### CALLED API URL')
+    if response == 'QUOTA':
+        VTWOQUOTA = True
+        return response
+    if response == 'NOT FOUND':
+        return response
+    logging.debug ('###### CHECKING IF "{" IN RESPONSE')
+    if '{' in response:
+        logging.debug ('###### YES THERE IS { IN RESPONSE')
+        a = '{'+response.split('{', 1)[1]
+        response = a.rsplit('}', 1)[0] + '}'
+        try:
+            retJson = json.loads(response)
+        except:
+            logging.debug ('###### THE RETURN JSON IS NOT VALID, WILL TRY TO FIX')
+            err = response.rfind ('],')
+            new_response = response[:err] + "]" + response[err+2:]
+            retJson = json.loads(new_response)
+    else:
+        logging.error ('###### CHECK RESPONSE '+str(response))
         return 'ERROR'
-    return json.loads(json.dumps(data))
+    ### CHECK FOR V2 QUOTA LIMITS TO AVOID CALLING FOR NO REASON
+    try:
+        myJson = retJson['response']
+    except Exception as e:
+        logging.debug ('###### THERE WAS AN ERROR WHEN RETRIEVING RESPONSE FROM URL RETURN')
+        myJson = 'ERROR'
+    if isinstance(retJson, (dict, list)):
+        try:
+            okcalls = myJson['ssuser']['requeststoday']
+            okmax = myJson['ssuser']['maxrequestsperday']
+            kocalls = myJson['ssuser']['requestskotoday']
+            komax = myJson['ssuser']['maxrequestskoperday']
+            logging.debug ('###### V2 QUOTA INFO - OK CALLS '+str(okcalls)+' KO CALLS '+str(kocalls)+' OK MAX '+str(okmax)+' KO MAX '+str(komax))
+            if int(okcalls) >= int(okmax) or int(kocalls) >= int(komax):
+                VTWOQUOTA = True
+                logging.debug('###### MAXIMUM DAILY QUOTA IS OVER')
+                return 'QUOTA'
+            else:
+                VTWOQUOTA = False
+        except Exception as e:
+            logging.error ('###### ERROR IN GETTING INFORMATION FROM RESPONSE // PORBABLY ANON CALL, NOTHING TO WORRY ABOUT '+str(e))
+    return myJson
+    
 
 
 def existsInGamelist(gamelist, game):
@@ -1167,7 +1181,7 @@ def getAllSystems(CURRSSID):
     API = "systemesListe"
     response = callAPI(fixedURL, API, fixParams, CURRSSID,False,'2','Get All Systems')
     ### IF WE GET A RESPONSE THEN RETURN THE LIST
-    if 'Error' not in response.keys():
+    if response != 'ERROR':
         try:
             return response['systemes']
         except Exception as e:
@@ -1182,7 +1196,7 @@ def deleteHashCache(file):
     val = (file, )
     connected = False
     logging.debug ('###### TRYING TO DELETE INFO IN HASH DB FOR '+file)
-    mycursor = mydb.cursor()
+    mycursor = mydb.cursor(buffered=True)
     try:
         mycursor.execute(sql, val)
         if mycursor.rowcount == 0:
@@ -1202,7 +1216,7 @@ def getAllGamesinDB():
     while not connected:
         logging.debug ('###### TRYING TO CONNECT')
         try:
-            mycursor = mydb.cursor()
+            mycursor = mydb.cursor(buffered=True)
             connected = True
             logging.debug ('###### CONNECTED SUCCESFULLY')
         except Exception as e:
@@ -1236,7 +1250,7 @@ def lookupHashInDB(file,hashType):
     while not connected:
         logging.debug ('###### TRYING TO CONNECT')
         try:
-            mycursor = mydb.cursor()
+            mycursor = mydb.cursor(buffered=True)
             connected = True
             logging.debug ('###### CONNECTED SUCCESFULLY')
         except Exception as e:
@@ -1265,7 +1279,7 @@ def lookupHashInDB(file,hashType):
 
 def updateHashInDB(file,hashType,hash):
     logging.debug ('###### UPDATING '+hashType+' '+hash+' FOR FILE '+file)
-    mycursor = mydb.cursor()
+    mycursor = mydb.cursor(buffered=True)
     sql = "UPDATE filehashes SET "+hashType.upper()+"= %s WHERE file = %s"
     val =(str(hash),str(file))
     try:
@@ -1278,7 +1292,7 @@ def updateHashInDB(file,hashType,hash):
 
 def insertHashInDB(file,hashType,hash):
     logging.debug ('###### INSERTING '+hashType+' '+hash+' FOR FILE '+file)
-    mycursor = mydb.cursor()
+    mycursor = mydb.cursor(buffered=True)
     sql = "INSERT INTO filehashes (file, "+hashType.upper()+") VALUES (%s, %s)"
     val =(str(file),str(hash))
     try:
@@ -1542,14 +1556,25 @@ def goForFile(file,path,CURRSSID,extensions,sysid):
         return file,None
     if exten == '.zip':
         ### IF EXTENSION IS ZIP, WE DO SOMETHING SPECIAL, WE DO NOT CHECK ONLY THE ZIP FILE, BUT ALSO ITS CONTENTS
-        file,gameinfo = processZip(path,file,CURRSSID,extensions,sysid)
+        try:
+            file,gameinfo = processZip(path,file,CURRSSID,extensions,sysid)
+        except Exception as e:
+            logging.error ('###### ERROR WHILE PROCESSING ZIPFILE '+file+' '+str(e))
         ### CHECK IF WE HAD A GAME RETURNED
     else:
         ### SO THIS IS A FILE WITH AN ACCEPTED EXTENSION, PROCESS IT
-        file,gameinfo = processFile (path,file,CURRSSID,True,sysid)
-    ### DID WE GET SOME GAME INFO?
-    if gameinfo:
         try:
+            logging.debug ('###### I\'M GOING TO PROCESS THE FILE '+file)
+            file,gameinfo = processFile (path,file,CURRSSID,True,sysid)
+            logging.debug ('###### I\'VE PROCESSED THE FILE '+file)
+        except Exception as e:
+            logging.error ('###### ERROR WHILE PROCESSING FILE '+file+' '+str(e))
+    ### DID WE GET SOME GAME INFO?
+    logging.debug ('###### SO FAR GAME INFO = '+str(gameinfo)+' AND IS OF TYPE '+str(type(gameinfo)))
+    if gameinfo:
+        logging.debug ('###### WE GOT A GAME INFO')
+        return file,gameinfo
+        '''try:
             ### YES WE DID, ADD SOME OF OUR OWN VALUES
             ### ADD SYSTE ID AS DEFINED IN SCRAPER SITE
             gameinfo['systemeid'] = sysid
@@ -1562,11 +1587,13 @@ def goForFile(file,path,CURRSSID,extensions,sysid):
             logging.debug ('###### FOUND GAME INFO FOR '+file)
             ### LAST BUT NOT LEAST, RETURN INFORMATION
             logging.debug('###### '+str(gameinfo))
-            return file,gameinfo
+        
+        return file,gameinfo
         except Exception as e:
             ### SO WE DID GET SOMETHING BUT NOT USABLE, RETURN NONE THEN
             logging.error('###### COULD NOT GET GAME INFO '+str(e))
             return file, None
+        '''
     else:
         ### SO WE DIDN'T GET ANYTHING, RETURN NONE THEN
         logging.info('###### COULD NOT GET GAME INFO ')
@@ -1604,20 +1631,13 @@ def processFile (path,file,CURRSSID,doRename,sysid):
     gameinfo = None
     file, gameinfo = getGameInfo(CURRSSID, path, file, md5offile, sha1offile, crcoffile,sysid)
     ### IF WE RECEIVE 'SKIP' THEN IT MEANS WE NEED TO SKIP THIS GAME FOR A REASON (USUALLY SCRAPE QUOTA IS OVER)
-    if gameinfo == 'SKIP':
-        logging.debug ('###### GOT INFO TO SKIP THIS GAME')
-        ### BUT WAIT, I JUST WANT TO SKIP NON ZIP FILES
-        ### THE REASONING IS THAT THE SCRAPPING SITE HAS A QUOTA FOR FAILED SCRAPES AND SUCCESFULL SCRAPES
-        ### AND ZIP TEND TO FILE WHILE PROPER FILE INSIDE NOT, SO LET'S TRY WITH FILE INSIDE AND SEE IF WE GET AN OK
-        if os.path.splitext(file)[1].upper() != '.ZIP':
-            ### IT IS NOT A ZIP FILE, SO WE REALLY WENT OVER THE QUOTA AND WE BETTR WAIT
-            logging.debug ('###### FILE IS NOT ZIP, SO NO NEED TO CONTINUE, WAITING')
-            ### WAIT UNTIL NEXT TIME
-            waitNewDay('23:00:00')
-        else:
-            ### AS SAID, IT IS A ZIP, SO LET'S RETURN NONE AND GO ON
-            gameinfo = None
-    ### RETURN WHATEVER WE HAVE FOUND
+    logging.debug ('###### GOT GAME INFO WHEN PROCESSING FILE ')
+    while gameinfo == 'QUOTA':
+        logging.debug ('###### THERE IS A QUOTA ISSUE')
+        logging.debug ('###### LET\'S WAIT FOR AN HOUR TO RETRY')
+        time.sleep(3600)
+        file, gameinfo = getGameInfo(CURRSSID, path, file, md5offile, sha1offile, crcoffile,sysid)
+    logging.debug ('###### I\'M RETURNING IT TO THE CALLER')
     return file, gameinfo
 
 def getRomFiles(path,acceptedExtens):
@@ -1738,7 +1758,7 @@ def deleteFromDB(sha1):
     connected = False
     while not connected:
         try:
-            mycursor = mydb.cursor()
+            mycursor = mydb.cursor(buffered=True)
             connected = True
         except Exception as e:
             logging.error ('###### CANNOT CONNECT TO DB - '+str(e))
@@ -1769,7 +1789,7 @@ def newLocateRom(romsha,rommd5,romcrc):
     connected = False
     while not connected:
         try:
-            mycursor = mydb.cursor()
+            mycursor = mydb.cursor(buffered=True)
             connected = True
             logging.debug ('###### CONNECTED SUCCESFULLY')
         except Exception as e:
@@ -1791,7 +1811,7 @@ def locateShainDB(mysha1='None',mymd5='None',mycrc='None',filename=''):
     while not connected:
         logging.debug ('###### TRYING TO CONNECT')
         try:
-            mycursor = mydb.cursor()
+            mycursor = mydb.cursor(buffered=True)
             connected = True
             logging.debug ('###### CONNECTED SUCCESFULLY')
         except Exception as e:
@@ -1819,16 +1839,40 @@ def locateShainDB(mysha1='None',mymd5='None',mycrc='None',filename=''):
             LEFT JOIN gameDates gd on gd.id = gr.gameid where gr.romsha1 = %s or gr.rommd5 = %s or gr.romcrc =%s) as gameinfo"
     val = (mysha1,mymd5,mycrc)
     connected = False
-    logging.debug ('###### TRYING TO QUERY DB '+sql)
+    logging.debug ('###### TRYING TO QUERY DB TO SEARCH HASHES ')
     try:
         mycursor.execute(sql, val)
         logging.debug ('@@@@@@@@@@ '+str(mycursor.statement))
-        if mycursor.rowcount == 0:
-            logging.debug ('###### NO DATA FOUND IN THE NEW DB')
-            return ''
+        if mycursor.rowcount != 0:
+            if mycursor.rowcount == 1:
+                logging.debug ('###### I\'VE FOUND WHAT YOU\'RE LOOKING FOR IN THE V2 DB')
+                result = mycursor.fetchall()[0][0].replace('\r\n', '\\r\\n')
+                logging.debug ('###### WE DID FIND SOMETHING '+result)
+                try:
+                    logging.debug ('##### ENCODING RESULT')
+                    if isinstance(result,str):
+                        logging.debug ('##### IT IS A STRING')
+                        result = result.encode('utf-8','replace')
+                    else:
+                        logging.debug ('##### IT IS NOT A STRING')
+                        result = result.encode('utf-8','replace')
+                except Exception as e:
+                    logging.error ('###### CANNOT ENCODE '+str(e))
+                try:
+                    logging.debug ('###### CONVERTING VIA JSON')
+                    myres = json.loads(result)
+                except Exception as e:
+                    logging.debug ('###### CONVERTING VIA AST '+str(e))
+                    myres = ast.literal_eval(result)
+                logging.debug ('###### GOT A RESULT AND I\'M RETURNING IT')
+                return myres
+            else:
+                logging.error ('###### I\'VE FOUND MORE THAN A SINGLE RESULT, THIS SHOULD NOT BE HAPPENING')
+                logging.error ('###### THIS IS THE QUERY ')
+                logging.error ('@@@@@@@@@@ '+str(mycursor.statement))
+                return 'ERROR'
         else:
-            result = mycursor.fetchall()
-            logging.debug ('###### FOUND MATCH IN DB ')
+            logging.debug ('###### NO DATA FOUND IN V2 DB GOING TO GO TO OLD DB ')
             ### I'M GOING TO CALL THE OLD DATABASE JUST IN CASE SO I CAN MIGRATE THIS ROM TO THE NEW DB
             sql = 'SELECT response FROM hashes WHERE hash=%s'
             val=(mysha1,)
@@ -1887,19 +1931,11 @@ def locateShainDB(mysha1='None',mymd5='None',mycrc='None',filename=''):
 
 def updateDB(mysha1,response):
     logging.debug ('###### CALLED UPDATE DB WITH RESPONSE '+str(response))
-    if ('Error 400:' in str(response) or 
-       'Error 401:' in str(response) or
-       'Error 403:' in str(response) or 
-       'Error 423:' in str(response) or 
-       'Error 426:' in str(response) or 
-       'Error 429:' in str(response) or 
-       'Error 430:' in str(response) or 
-       'Error 431:' in str(response) or 
-       response == 'QUOTA'):
+    if response == 'ERROR':
         logging.debug ('###### GOT AN ERROR FROM API CALL SO I\'M NOT UPDATING THE DB HASH')
         return 
     if not 'urlopen error' in response:
-        mycursor = mydb.cursor()
+        mycursor = mydb.cursor(buffered=True)
         sql = "REPLACE INTO hashes (hash, response) VALUES (%s, %s)"
         val =[(str(mysha1),str(response))]
         try:
@@ -1914,7 +1950,7 @@ def updateDB(mysha1,response):
         return
 
 def deleteHashFromDB(filename):
-    mycursor = mydb.cursor()
+    mycursor = mydb.cursor(buffered=True)
     sql = 'DELETE FROM filehashes WHERE file = "%s"'
     val =(str(filename))
     try:
@@ -1929,7 +1965,7 @@ def deleteHashFromDB(filename):
 
 
 def updateDBFile(origfile,destfile):
-    mycursor = mydb.cursor()
+    mycursor = mydb.cursor(buffered=True)
     sql = 'UPDATE filehashes SET file = %s WHERE file = %s'
     val =(str(destfile),str(origfile))
     try:
@@ -1947,7 +1983,7 @@ def getGameInfo(CURRSSID, pathtofile, file, mymd5, mysha1, mycrc, sysid):
     ### IS ANY OF THE PARAMETERS EMPTY?
     if mymd5 == '' or mysha1 == '' or mycrc == '':
         # YES, GO BACK
-        return file,None
+        return file,'ERROR'
     logging.info ('###### GETTING GAME INFORMATION')
     ### THIS IS THE NAME OF THE API WE HAVE TO CALL
     API = "jeuInfos"
@@ -1975,7 +2011,11 @@ def getGameInfo(CURRSSID, pathtofile, file, mymd5, mysha1, mycrc, sysid):
         if response == 'QUOTA':
             ### YES, SO RETURN TO SKIP THE FILE IF POSSIBLE
             loggign.info ('###### QUOTA LIMIT DONE RETURNED BY API')
-            return file,'SKIP'
+            return file, response
+        if response == 'ERROR':
+            ### YES, SO RETURN TO SKIP THE FILE IF POSSIBLE
+            loggign.info ('###### QUOTA LIMIT DONE RETURNED BY API')
+            return file, response
         ### DID THE SCRAPER RETURN A VALID ROM?
         ### USUALLY IN A VALID RESPONSE WE WOULD HAVE THE JEU KEY
         ### AND OF COURSE THE ANSWER WILL NOT BE EMPTY
@@ -2013,12 +2053,7 @@ def getGameInfo(CURRSSID, pathtofile, file, mymd5, mysha1, mycrc, sysid):
                     ### CHECK IF WE WENT OVER QUOTA
                     if newresponse == 'QUOTA':
                         logging.debug ('###### QUOTA DONE')
-                        ### WE DID, CAN WE TRY CALLING ANONYMOUS?
-                        newresponse = None
-                        newresponse = callAPI(fixedURL, API, gameparams, CURRSSID,True,'2','NEWRESPONSE IN QUOTA')
-                        if newresponse == 'QUOTA':
-                            ### NO WE CANNOT
-                            return file, 'SKIP'
+                        return file, newresponse
                     ### SO, DID WE GET A PROPER RESPONSE? (REMEMBER JEU NEEDS TO BE THERE)
                     if 'jeu' in newresponse:
                         ### YES WE DID
@@ -2052,15 +2087,8 @@ def getGameInfo(CURRSSID, pathtofile, file, mymd5, mysha1, mycrc, sysid):
             ### ARE WE OVER THE ALLOWED QUOTA?
             if newresponse == 'QUOTA':
                 ### YES
-                logging.info ('###### QUOTA DONE, TRYING ANON')
-                ### CAN WE TRY TO CALL IT ANONYMOUSLY?
-                newresponse = None
-                newresponse = callAPI(fixedURL, API, gameparams, CURRSSID,True,'2','QUOTA NEWRESPONSE')
-                if newresponse == 'QUOTA':
-                    ### NO WE CAN'T
-                    logging.info ('###### QUOTA REALLY DONE, NOT UPDATING')
-                    ### SO SKIP FILE
-                    return file, 'SKIP'
+                logging.info ('###### QUOTA DONE')
+                return file, newresponse
             ### DID WE GET A VALID RESPONSE??? (REMMEBER JEU)
             if 'jeu' in newresponse:
                 ### YES WE DID
@@ -2083,7 +2111,7 @@ def getGameInfo(CURRSSID, pathtofile, file, mymd5, mysha1, mycrc, sysid):
         ### ARE WE OVER THE QUOTA?
         if response == 'QUOTA':
             ## IMPOSSIBLE TO DO CALLS
-            return file, 'SKIP'
+            return file, response
         ### DID WE GET A PROPER ANSWER? (JEU)
         logging.debug ('###### THE RESPONSE SO FAR '+str(response))
         if response =='ERROR' :
@@ -2092,13 +2120,13 @@ def getGameInfo(CURRSSID, pathtofile, file, mymd5, mysha1, mycrc, sysid):
             response['file'] = pathtofile.replace("'","\'")
             response['localhash'] = mysha1
             response['GameID'] = '0'
-            response['systemeid'] = '0'
+            response['systemeid'] = str(sysid)
             #logging.debug ('###### RESPONSE TO UPDATE '+str(response))
-            ## TODO REMOVE COMMENT updateDB (mysha1,response)
+            updateDB (mysha1,response)
         else:
             logging.debug ('###### GOT ANSWER FROM API, UPDATING DB')
             #logging.debug ('###### RESPONSE TO UPDATE '+str(response))
-            ## TODO REMOVE updateDB (mysha1,response)
+            updateDB (mysha1,response)
     ### SO NOW WE HAVE A RESPONSE, LET'S TREAT IT
     ### WE ASSUME THE ROM WAS NOT FOUND
     foundRom = False
@@ -2106,7 +2134,7 @@ def getGameInfo(CURRSSID, pathtofile, file, mymd5, mysha1, mycrc, sysid):
     logging.debug ('###### RESPONSE IS '+str(response))
     if response == 'QUOTA':
         logging.error ('###### GONE OVER QUOTA')
-        return file,'SKIP'
+        return file,response
     if response == 'ERROR':
         ### YES THERE IS
         logging.debug('###### API GAVE ERROR BACK, CREATING EMPTY DATA '+str(response))
@@ -2120,7 +2148,7 @@ def getGameInfo(CURRSSID, pathtofile, file, mymd5, mysha1, mycrc, sysid):
                 'synopsis': '',
                 'medias': '',
                 'dates': '',
-                'systemeid':'0'
+                'systemeid':sysid
                 }
                 }
     ## SO NOW WE HAVE A PROPER ANSER TO RETURN`, BUT WE ADD THE LOCAL VALUES
@@ -2134,7 +2162,7 @@ def getSystemName (sysid):
     logging.debug ('###### GOING TO GRAB SYSTEM NAME FROM LOCALDB')
     sql = 'SELECT `text` FROM systems WHERE id = %s'
     val = (sysid,)
-    mycursor = mydb.cursor()
+    mycursor = mydb.cursor(buffered=True)
     try:
         mycursor.execute(sql,val)
         result =  mycursor.fetchall()[0][0]
@@ -2148,6 +2176,8 @@ def getSystemName (sysid):
 def getSystemForRom(rom,sysid):
     file,romInfo = getGameInfo(CURRSSID,rom,rom[rom.rindex('/')+1:],md5(rom),sha1(rom),crc(rom),sysid)
     logging.debug ('###### RETURN FROM ROM INFO '+str(type(romInfo)))
+    if romInfo == '' or romInfo == 'QUOTA' or romInfo == 'ERROR':
+        return None 
     try:
         romInfo=ast.literal_eval(romInfo)
     except:
@@ -2800,7 +2830,7 @@ def updateFile(path,localSHA,localCRC,localMD):
     filepath = path[:path.rindex('/')+1]
     filext = path[path.rindex('.'):]
     localfile,thisGame = getGameInfo(0,path,path[path.rindex('/')+1:],localMD,localSHA,localCRC,0)
-    if 'jeu' not in str(thisGame):
+    if thisGame == 'QUOTA' or thisGame =='' or thisGame=='ERROR':
         ### The game information is not complete, better not to process
         print 'SKIPPING '+localSHA
         return
@@ -2875,7 +2905,7 @@ def renameFiles():
 def executeSQL(sqlst):
     logging.debug('###### SQL '+sqlst)
     result = None
-    mycursor = mydb.cursor()
+    mycursor = mydb.cursor(buffered=True)
     try:
         if 'SELECT' in sqlst:
             logging.debug('###### IS SELECT ')

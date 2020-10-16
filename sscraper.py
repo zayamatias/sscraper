@@ -78,7 +78,7 @@ UPDATEDATA = update
 try:
     logging.basicConfig(filename='sv2log.txt', filemode='a',
                         format='%(asctime)s - %(process)d - %(name)s - %(levelname)s - %(message)s',
-                        level=logging.ERROR)
+                        level=logging.DEBUG)
     logging.debug("Logging service started")
 except Exception as e:
     logging.debug('error al crear log '+str(e))
@@ -327,7 +327,7 @@ def searchInDBV2Call(api,params):
             result = mycursor.fetchall()
             result = result[0][0]
             logging.debug ('###### FOUND CACHED CALL IN DB')
-            return result
+            return parsePossibleErrors(result)
     except Exception as e:
         logging.error ('###### CANNOT QUERY THE DB DUE TO ERROR - '+str(mycursor.statement)+' - '+str(e))
         return None
@@ -391,7 +391,6 @@ def getV2CallFromDB(URL):
 
 def doV2URLRequest(URL):
     request = urllib2.Request(URL)
-    logging.debug ('####### CONVERTED URL TO ANONYMOUS ')
     response = ''
     try:
         response = urllib2.urlopen(request,timeout=60).read()
@@ -426,32 +425,38 @@ def callAPIURL(URL):
         ### -------------------------------------------------
         ### CONVERT URL TO ANON AND CALL IT
         anonURL = re.sub(r"&ssid=\w*","&ssid=",URL)
+        logging.debug ('###### CALLING AS ANON')
         response = doV2URLRequest(anonURL)
         if response == 'FAILED' or response == 'QUOTA':
-            logging.denug ('###### FAILED TO CALL AS ANON, WILL RETRY AS IDENTIFIED')
+            logging.debug ('###### FAILED TO CALL AS ANON, WILL RETRY AS IDENTIFIED')
+            sleep (180)
             response = doV2URLRequest(URL)
-        if response != 'FAILED' and response != 'QUOTA' and response != 'NOT FOUND':
+        if response != 'FAILED' and response != 'QUOTA':
             successCall = True
             logging.debug ('###### DECODING RESPONSE')
             response = response.decode('utf-8').encode('ascii','replace') ### DO NOT TOUCH
-            try:
-                retJson = json.loads(response)
-            except:
-                logging.debug ('###### THE RETURN JSON WHEN CALLED API IS NOT VALID, WILL TRY TO FIX')
-                err = response.rfind ('],')
-                new_response = response[:err] + "]" + response[err+2:]
-                response = new_response
-            if v2 and apiname !='' and response!='':
-                logging.debug ('###### GOING TO UPDATE CACHE IN DB FOR V2')
-                apiname,dbparams = getV2CallInfo(URL)
-                updateInDBV2Call(apiname,dbparams,response)
-        else:
-            if response == 'QUOTA':
-                logging.debug ('###### WE GOT QUOTA ERROR FOR ANON AND IDENTIFIED - WE CANNOT CONTINUE - WAIT 10 MINS TO RETRY')
-                time.sleep (600)
-            if response == 'NOT FOUND':
-                logging.debug ('###### ROM HAS NOT BE FOUND, RETURN THIS INFORMATION TO CALLER')
-                successCall=True
+        if response == 'QUOTA':
+            logging.debug ('###### WE GOT QUOTA ERROR FOR ANON AND IDENTIFIED - WE CANNOT CONTINUE - WAIT 10 MINS TO RETRY')
+            sleep (180)
+        if response == 'NOT FOUND':
+            logging.debug ('###### ROM/GAME HAS NOT BE FOUND, RETURN THIS INFORMATION TO CALLER')
+            successCall = True
+        if response == 'FAILED':
+            logging.debug ('###### FAILED TO CALL AS IDENTIFIED WILL RETRY AS ANON')
+            sleep (180)
+
+    logging.debug ('###### AN ACCEPTABLE ANSWER WAS FOUND, GOING TO PROCESS IT')
+    try:
+        retJson = json.loads(response)
+    except:
+        logging.debug ('###### THE RETURN JSON WHEN CALLED API IS NOT VALID, WILL TRY TO FIX')
+        err = response.rfind ('],')
+        new_response = response[:err] + "]" + response[err+2:]
+        response = new_response
+    if v2 and apiname !='' and response!='':
+        logging.debug ('###### GOING TO UPDATE CACHE IN DB FOR V2')
+        apiname,dbparams = getV2CallInfo(URL)
+        updateInDBV2Call(apiname,dbparams,response)
     return response
 
 def isMissing(json,file):
@@ -743,22 +748,21 @@ def waitNewDay(runTime):
     logging.info ('Starttime is '+str(startTime))
     allowed = False
     anon = False
+    logging.info ('###### WAITING FOR NEXT DAY')
+    API = "jeuInfos"
+    params = None
+    params =dict(fixParams)
+    params['gameid'] = 1
     while (startTime > datetime.today().time()) and not allowed: # you can add here any additional variable to break loop if necessary
         sleep(60)
-        logging.info ('###### WAITING FOR NEXT DAY')
-        API = "jeuInfos"
-        params = None
-        params =dict(fixParams)
-        params['gameid'] = 1
-        response = callAPI(fixedURL,API,params,0,anon,'2','WAIT NEW DAY')
-        anon = not anon
+        response = callAPI(fixedURL,API,params,0,'2','WAIT NEW DAY')
         if 'jeu'  in response:
             allowed = True
             VTWOQUOTA = False            
     logging.info ('###### FINISHED WAITING')
     return
 
-def callAPI(URL, API, PARAMS, CURRSSID,Anon=False,Version='',tolog=''):
+def callAPI(URL, API, PARAMS, CURRSSID,Version='',tolog=''):
     ## REMOVE CRC AND MD5, TENDS TO FAIL IN v2
     PARAMS.pop('md5',None)
     PARAMS.pop('crc',None)   
@@ -1179,7 +1183,7 @@ def getAllSystems(CURRSSID):
     logging.debug ('###### GETTING ALL SYSTEMS LIST')
     ### THIS IS THE API NAME
     API = "systemesListe"
-    response = callAPI(fixedURL, API, fixParams, CURRSSID,False,'2','Get All Systems')
+    response = callAPI(fixedURL, API, fixParams, CURRSSID,'2','Get All Systems')
     ### IF WE GET A RESPONSE THEN RETURN THE LIST
     if response != 'ERROR':
         try:
@@ -1574,26 +1578,6 @@ def goForFile(file,path,CURRSSID,extensions,sysid):
     if gameinfo:
         logging.debug ('###### WE GOT A GAME INFO')
         return file,gameinfo
-        '''try:
-            ### YES WE DID, ADD SOME OF OUR OWN VALUES
-            ### ADD SYSTE ID AS DEFINED IN SCRAPER SITE
-            gameinfo['systemeid'] = sysid
-            ### ADD LOCAL PATH TO THE FILE
-            gameinfo['localpath'] = path+'/'+file
-            ### ADD ABSOLUTE PATH
-            gameinfo['abspath'] = path
-            ### AND FINALLY ADD SHA1 OF THE FILE
-            gameinfo['localhash'] = sha1(path+'/'+file)
-            logging.debug ('###### FOUND GAME INFO FOR '+file)
-            ### LAST BUT NOT LEAST, RETURN INFORMATION
-            logging.debug('###### '+str(gameinfo))
-        
-        return file,gameinfo
-        except Exception as e:
-            ### SO WE DID GET SOMETHING BUT NOT USABLE, RETURN NONE THEN
-            logging.error('###### COULD NOT GET GAME INFO '+str(e))
-            return file, None
-        '''
     else:
         ### SO WE DIDN'T GET ANYTHING, RETURN NONE THEN
         logging.info('###### COULD NOT GET GAME INFO ')
@@ -1635,7 +1619,7 @@ def processFile (path,file,CURRSSID,doRename,sysid):
     while gameinfo == 'QUOTA':
         logging.debug ('###### THERE IS A QUOTA ISSUE')
         logging.debug ('###### LET\'S WAIT FOR AN HOUR TO RETRY')
-        time.sleep(3600)
+        sleep(3600)
         file, gameinfo = getGameInfo(CURRSSID, path, file, md5offile, sha1offile, crcoffile,sysid)
     logging.debug ('###### I\'M RETURNING IT TO THE CALLER')
     return file, gameinfo
@@ -1874,6 +1858,7 @@ def locateShainDB(mysha1='None',mymd5='None',mycrc='None',filename=''):
         else:
             logging.debug ('###### NO DATA FOUND IN V2 DB GOING TO GO TO OLD DB ')
             ### I'M GOING TO CALL THE OLD DATABASE JUST IN CASE SO I CAN MIGRATE THIS ROM TO THE NEW DB
+            ### THIS WILL HAVE TO BE EVENTUALLY REMOVED WHEN EVERYTHING IS MIGRATED TO V2
             sql = 'SELECT response FROM hashes WHERE hash=%s'
             val=(mysha1,)
             try:
@@ -2049,7 +2034,7 @@ def getGameInfo(CURRSSID, pathtofile, file, mymd5, mysha1, mycrc, sysid):
                     ### ADD GAMEID TO PARAMETERS
                     gameparams['gameid'] = response['GameID']
                     ### AND GET THE RESPONSE TO THE CALL
-                    newresponse = callAPI(fixedURL,API,gameparams,CURRSSID,False,'2','THERE IS A GAME ID HERE')
+                    newresponse = callAPI(fixedURL,API,gameparams,CURRSSID,'2','THERE IS A GAME ID HERE')
                     ### CHECK IF WE WENT OVER QUOTA
                     if newresponse == 'QUOTA':
                         logging.debug ('###### QUOTA DONE')
@@ -2083,7 +2068,7 @@ def getGameInfo(CURRSSID, pathtofile, file, mymd5, mysha1, mycrc, sysid):
             gameparams['gameid'] = response['jeu']['id']
             ### AND WE CALL THE API
             newresponse = None
-            newresponse = callAPI(fixedURL,API,gameparams,CURRSSID,False,'2','FROM UPDATEDATA')
+            newresponse = callAPI(fixedURL,API,gameparams,CURRSSID,'2','FROM UPDATEDATA')
             ### ARE WE OVER THE ALLOWED QUOTA?
             if newresponse == 'QUOTA':
                 ### YES
@@ -2107,7 +2092,7 @@ def getGameInfo(CURRSSID, pathtofile, file, mymd5, mysha1, mycrc, sysid):
         logging.debug('###### CALLING API IN NORMAL MODE')
         ### CALL THE API TO GET AN ANSWER
         response = None
-        response = callAPI(fixedURL, API, params, CURRSSID,False,'2','NO SHA IN DB')
+        response = callAPI(fixedURL, API, params, CURRSSID,'2','NO SHA IN DB')
         ### ARE WE OVER THE QUOTA?
         if response == 'QUOTA':
             ## IMPOSSIBLE TO DO CALLS
@@ -2185,15 +2170,17 @@ def getSystemForRom(rom,sysid):
     if romInfo :
         logging.debug ('###### WE CAN PROCESS THE ROM INFO')
         try:
-            mysisid = romInfo['jeu']['systemeid']
+            mysisid = romInfo['jeu']['systeme']['id']
         except:
-            logging.debug ('####### JEU/SYSID NOT FOUND')
             try:
-                mysisid = romInfo['systemeid']
+                mysisid = romInfo['jeu']['systemeid']
+                logging.debug ('####### JEU/SYSID NOT FOUND')
             except:
-                logging.debug ('####### SYSID NOT FOUND EITHER, DEFAULTING TO ZERO')
-                mysisid = 0
-
+                try:
+                    mysisid = romInfo['systemeid']
+                except:
+                    logging.debug ('####### SYSID NOT FOUND EITHER, DEFAULTING TO ZERO')
+                    mysisid = 0
         return getSystemName(mysisid)
     else:
         return None
@@ -2213,12 +2200,27 @@ def copyRoms (systemid,systemname,path,CURRSSID,extensions,outdir):
         romSys = getSystemForRom(path+file,systemid)
         logging.debug ('###### SYSTEM FOR ROM IS '+str(romSys))
         if romSys:
+            origsystem = getSystemName(systemid).lower().replace(' ','')
             origfile = path+file
+            ### DESTINATION FILES
+            videofile = 'videos/'+sha1(file)+'-video.mp4'
+            imagefile = 'images/'+sha1(file)+'-image.png'
+            bezelfile = file[:file.rindex('.')]+'.cfg'
             destfile = outdir+romSys.lower().replace(' ','')+'/'+file
             logging.debug ('###### GOING TO COPY ROM '+origfile+' TO '+destfile)
             destpath = destfile[:destfile.rindex('/')]
             if not os.path.isdir(destpath):
                 os.mkdir(destpath)
+            destpath = destpath + '/' + origsystem + '/'
+            destfile = destpath + file
+            if not os.path.isdir(destpath):
+                os.mkdir(destpath)
+            destvidpath = destpath+'videos/'
+            if not os.path.isdir(destvidpath):
+                os.mkdir(destvidpath)
+            destimgpath = destpath+'images/'
+            if not os.path.isdir(destimgpath):
+                os.mkdir(destimgpath)
             try:
                 if (not os.path.isfile(destfile)):
                     copyfile(origfile,destfile)
@@ -2227,10 +2229,26 @@ def copyRoms (systemid,systemname,path,CURRSSID,extensions,outdir):
                         copyfile(origfile,destfile)
                     else:
                         logging.info ('###### FILE '+destfile+' ALREADY EXISTS')
+                    thisfile = path+videofile
+                    thisdfile = destpath+videofile
+                    if os.path.isfile(thisfile):
+                        logging.debug ('###### GOING TO COPY VIDEO '+thisfile+' TO '+thisdfile)
+                        copyfile(thisfile,thisdfile)
+                    thisfile = path+imagefile
+                    thisdfile = destpath+imagefile
+                    if os.path.isfile(thisfile):
+                        logging.debug ('###### GOING TO COPY IMAGE '+thisfile+' TO '+thisdfile)
+                        copyfile(thisfile,thisdfile)
+                    thisfile = path+bezelfile
+                    thisdfile = destpath+bezelfile
+                    if os.path.isfile(thisfile):
+                        logging.debug ('###### GOING TO COPY BEZEL CONFIG '+thisfile+' TO '+thisdfile)
+                        copyfile(thisfile,thisdfile)
             except Exception as e:
                 logging.error ('####### COULD NOT COPY '+origfile+' DUE TO '+str(e))
         else:
             logging.error ('###### FAILED TO COPY ROM '+origfile+' TO DESTINATION')
+        sys.exit()
     return ''
 
 
@@ -2663,7 +2681,7 @@ def findMissing():
                         myParams['systemeid']=str(system)
                         ## VOY A BUSCAR LOS TRES PRMEROS CARACTERES, Y DESPUES HACER UNA LOGICA EN EL MATCH DE CUANTOS CARACTERES IGUALES HAY, NO LOS 4 PRIMEROS
                         logging.info('###### LOOKING SCRAPER FOR '+myParams['recherche']+ ' FOR SYSTEM '+str(system))
-                        returnValue = callAPI(fixedURL,API,myParams,0,False,'2',' SYSTEM SOMETHING')
+                        returnValue = callAPI(fixedURL,API,myParams,0,'2',' SYSTEM SOMETHING')
                         logging.debug (returnValue)
                         if 'jeux' in returnValue.keys():
                             if len(returnValue['jeux']) > 1:
@@ -3122,8 +3140,6 @@ if migrateDB:
         logging.debug ('###### SYSTEM '+str(system))
         insertSystemInLocalDb (system)    
     ### first import all games into local DB
-    anon = True
-    anonquota = False
     maxssid = len(config.ssid)
     currssid = 0
     gameid = int(startid)
@@ -3131,35 +3147,32 @@ if migrateDB:
     numGames = 276000
     response = 'QUOTA'
     while gameid <= numGames:
-        params['gameid'] = str(gameid)
-        while response == 'QUOTA':
-            response = callAPI(fixedURL,'jeuInfos',params,currssid,anon,'2','MIGRATE DB AS ANON '+str(anon))
+        while response == 'QUOTA' or response == 'ERROR':
+            params['gameid'] = str(gameid)
+            response = callAPI(fixedURL,'jeuInfos',params,currssid,'2','MIGRATE DB ')
             if response == 'QUOTA':
-                if anon:
-                    anonquota = True
-                anon = not anon
-            else:
-                anon = not anonquota
-            False
+                logging.debug ('###### QUOTA IS OVER, WAITING UNTIL NEXT DAY')
+                waitNewDay('23:00:00')
+            if response == 'NOT FOUND':
+                logging.error('###### ID '+str(gameid)+' DOES NOT SEEM TO EXIST IN SCREENSCRAPER')
         logging.debug ('####### RESPONSE FROM API CALL ')###+str(response))
-        ### TODO : INSERT INFORMATION IN DB
         if response != 'ERROR':
-            insertGameInLocalDb(response['jeu'])
+            logging.debug ('###### GOING TO INSERT GAMEID '+str(gameid)+' IN DB')
+            ##insertGameInLocalDb(response['jeu'])
         if cnt == 50:
 	        mydb.commit()
 	        cnt = 0
-	cnt = cnt + 1
+        else:
+            cnt = cnt + 1
         logging.error ('###### DONE GAME '+str(gameid))
-	gameid = gameid + 1
+        gameid = gameid + 1
         response = 'QUOTA'
         currssid = currssid + 1
         if currssid == maxssid:
             currssid = 0
     ## Now all games have been imported into local DB
-
+    sys.exit(0)
 ## Default behaviour
-
 scrapeRoms(CURRSSID)
-
 sys.exit(0)
 

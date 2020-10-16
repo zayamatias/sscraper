@@ -84,7 +84,7 @@ The switch '--rename' will fetch all games in the local DB, and try to rename fi
 
 ## Clone DB mode
 
-Try --startid (game_id of choice) to start download game information into the local DB starting from game_id, data will be stored locally so you would still eb able to scrap roms regardless if the site is down or your quota is over.
+Try --startid (game_id of choice) to start download game information into the local DB starting from game_id, data will be stored locally so you would still be able to scrap roms regardless if the site is down or your quota is over. Of coure, this is a super lengthy process that can take several days depending on your quota limits.
 
 ## Sort Mode
 

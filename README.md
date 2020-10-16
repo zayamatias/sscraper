@@ -2,7 +2,7 @@
 
 Python tool to scrape from screenscraper.fr - This is not a GUI tool, it must be run on the command line, preferably on the machine where your roms are hosted.
 
-This scraper needs a MYSQL database available, you will need to create 2 tables. Please look at the tables.sql file.
+This scraper needs a MYSQL database available, you will need to create some tables. Please look at the tables.sql file.
 The local DB is used so following scrapes are done first in the DB, speeding up the process and easing the load in screenscraper.fr (and not getting blocked by using up your quota everytime)
 
 This script will probably run only on linux machines, sorry. Feel free to adapt it for other OS's.

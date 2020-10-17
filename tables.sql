@@ -1,3 +1,7 @@
+CREATE DATABASE `romhashes` /*!40100 DEFAULT CHARACTER SET utf8mb4 */;
+
+USE `romhashes`
+
 CREATE TABLE 'filehashes' (
   'file' varchar(300) NOT NULL,
   'SHA1' varchar(100) DEFAULT NULL,
@@ -15,18 +19,14 @@ CREATE TABLE 'hashes' (
   PRIMARY KEY ('hash')
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
 
-CREATE TABLE `apicache` (
-  `apiname` varchar(100) NOT NULL,
-  `parameters` varchar(255) NOT NULL,
-  `result` longtext DEFAULT NULL,
-  KEY `apicache_apiname_IDX` (`apiname`,`parameters`) USING BTREE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Holds a cache of V2 API CALLS'
+-- romhashes.apicache definition
 
 CREATE TABLE `apicache` (
   `apiname` varchar(100) NOT NULL,
   `parameters` varchar(255) NOT NULL,
   `result` longtext DEFAULT NULL,
-  KEY `apicache_apiname_IDX` (`apiname`,`parameters`) USING BTREE
+  KEY `apicache_apiname_IDX` (`apiname`,`parameters`) USING BTREE,
+  KEY `apicache_parameters_IDX` (`parameters`) USING BTREE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Holds a cache of V2 API CALLS';
 
 CREATE TABLE `editors` (
@@ -35,11 +35,17 @@ CREATE TABLE `editors` (
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- romhashes.systems definition
+
 CREATE TABLE `systems` (
   `id` int(11) NOT NULL,
   `text` varchar(100) DEFAULT NULL,
-  PRIMARY KEY (`id`)
+  `type` varchar(30) DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `systems_type_IDX` (`type`) USING BTREE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- romhashes.games definition
 
 CREATE TABLE `games` (
   `id` int(11) NOT NULL,
@@ -56,6 +62,8 @@ CREATE TABLE `games` (
   CONSTRAINT `editor_FK` FOREIGN KEY (`editeur`) REFERENCES `editors` (`id`) ON DELETE CASCADE ON UPDATE CASCADE,
   CONSTRAINT `system_FK` FOREIGN KEY (`system`) REFERENCES `systems` (`id`) ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Holds the basic information of the games';
+
+-- romhashes.gameRoms definition
 
 CREATE TABLE `gameRoms` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
@@ -76,8 +84,11 @@ CREATE TABLE `gameRoms` (
   PRIMARY KEY (`id`),
   UNIQUE KEY `gameRoms_UN` (`rommd5`,`romcrc`,`romsha1`),
   KEY `gameRoms_FK` (`gameid`),
+  KEY `gameRoms_romsha1_IDX` (`romsha1`) USING BTREE,
+  KEY `gameRoms_romcrc_IDX` (`romcrc`) USING BTREE,
+  KEY `gameRoms_rommd5_IDX` (`rommd5`) USING BTREE,
   CONSTRAINT `gameRoms_FK` FOREIGN KEY (`gameid`) REFERENCES `games` (`id`) ON DELETE CASCADE ON UPDATE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=406002 DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB AUTO_INCREMENT=726828 DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE `gameDates` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
@@ -102,6 +113,8 @@ CREATE TABLE `gameMedias` (
   CONSTRAINT `gameMedias_FK` FOREIGN KEY (`gameid`) REFERENCES `games` (`id`) ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB AUTO_INCREMENT=1425774 DEFAULT CHARSET=utf8mb4;
 
+-- romhashes.gameNames definition
+
 CREATE TABLE `gameNames` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
   `region` varchar(12) DEFAULT NULL,
@@ -109,8 +122,11 @@ CREATE TABLE `gameNames` (
   `gameid` int(11) NOT NULL,
   PRIMARY KEY (`id`),
   KEY `gameNames_FK` (`gameid`),
+  KEY `gameNames_text_IDX` (`text`) USING BTREE,
   CONSTRAINT `gameNames_FK` FOREIGN KEY (`gameid`) REFERENCES `games` (`id`) ON DELETE CASCADE ON UPDATE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=503859 DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB AUTO_INCREMENT=395321 DEFAULT CHARSET=utf8mb4;
+
+-- romhashes.gameSynopsis definition
 
 CREATE TABLE `gameSynopsis` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
@@ -121,4 +137,4 @@ CREATE TABLE `gameSynopsis` (
   UNIQUE KEY `gameSynopsis_UN` (`langue`,`gameid`),
   KEY `gameSynopsis_FK` (`gameid`),
   CONSTRAINT `gameSynopsis_FK` FOREIGN KEY (`gameid`) REFERENCES `games` (`id`) ON DELETE CASCADE ON UPDATE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=106392 DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB AUTO_INCREMENT=147661 DEFAULT CHARSET=utf8mb4;

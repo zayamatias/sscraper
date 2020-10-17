@@ -88,7 +88,7 @@ CREATE TABLE `gameRoms` (
   KEY `gameRoms_romcrc_IDX` (`romcrc`) USING BTREE,
   KEY `gameRoms_rommd5_IDX` (`rommd5`) USING BTREE,
   CONSTRAINT `gameRoms_FK` FOREIGN KEY (`gameid`) REFERENCES `games` (`id`) ON DELETE CASCADE ON UPDATE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=726828 DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE `gameDates` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
@@ -98,7 +98,7 @@ CREATE TABLE `gameDates` (
   PRIMARY KEY (`id`),
   UNIQUE KEY `gameDates_UN` (`gameID`,`region`),
   CONSTRAINT `gameDates_FK` FOREIGN KEY (`gameID`) REFERENCES `games` (`id`) ON DELETE CASCADE ON UPDATE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=7925
+) ENGINE=InnoDB AUTO_INCREMENT=1
 
 CREATE TABLE `gameMedias` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
@@ -111,7 +111,7 @@ CREATE TABLE `gameMedias` (
   UNIQUE KEY `gameMedias_UN` (`type`,`region`,`gameid`),
   KEY `gameMedias_FK` (`gameid`),
   CONSTRAINT `gameMedias_FK` FOREIGN KEY (`gameid`) REFERENCES `games` (`id`) ON DELETE CASCADE ON UPDATE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=1425774 DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4;
 
 -- romhashes.gameNames definition
 
@@ -124,7 +124,7 @@ CREATE TABLE `gameNames` (
   KEY `gameNames_FK` (`gameid`),
   KEY `gameNames_text_IDX` (`text`) USING BTREE,
   CONSTRAINT `gameNames_FK` FOREIGN KEY (`gameid`) REFERENCES `games` (`id`) ON DELETE CASCADE ON UPDATE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=395321 DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4;
 
 -- romhashes.gameSynopsis definition
 
@@ -137,4 +137,4 @@ CREATE TABLE `gameSynopsis` (
   UNIQUE KEY `gameSynopsis_UN` (`langue`,`gameid`),
   KEY `gameSynopsis_FK` (`gameid`),
   CONSTRAINT `gameSynopsis_FK` FOREIGN KEY (`gameid`) REFERENCES `games` (`id`) ON DELETE CASCADE ON UPDATE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=147661 DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4;

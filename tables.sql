@@ -104,7 +104,7 @@ CREATE TABLE `gameMedias` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
   `type` varchar(20) DEFAULT NULL,
   `url` varchar(300) DEFAULT NULL,
-  `region` varchar(10) DEFAULT NULL,
+  `region` varchar(40) DEFAULT NULL,
   `format` varchar(5) DEFAULT NULL,
   `gameid` int(11) DEFAULT NULL,
   PRIMARY KEY (`id`),

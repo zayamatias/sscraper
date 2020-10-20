@@ -78,7 +78,7 @@ UPDATEDATA = update
 try:
     logging.basicConfig(filename='sv2log.txt', filemode='a',
                         format='%(asctime)s - %(process)d - %(name)s - %(levelname)s - %(message)s',
-                        level=logging.DEBUG)
+                        level=logging.ERROR)
     logging.debug("Logging service started")
 except Exception as e:
     logging.debug('error al crear log '+str(e))
@@ -107,7 +107,7 @@ testAPI = "ssuserInfos"
 fixParams = {'devid': config.devid,
              'devpassword': config.devpassword,
              'softname': config.softname,
-             'ssid': 'EMPTY',
+             'ssid':'',
              'sspassword': config.sspass,
              'output': 'json'}
 cachedir = '/home/pi/hashes/'
@@ -392,11 +392,20 @@ def getV2CallFromDB(URL):
 def doV2URLRequest(URL):
     request = urllib2.Request(URL)
     response = ''
-    try:
-        response = urllib2.urlopen(request,timeout=60).read()
-    except Exception as e:
-        logging.error ('###### ERROR IN CALLING URL '+str(e))
-        response = str(e)
+    timeout = True
+    while timeout:
+        try:
+            response = urllib2.urlopen(request,timeout=60).read()
+            timeout = False
+        except socket.timeout, e:
+            logging.error ('###### TIMEOUT ERROR - RETRYING')
+        except Exception as e:
+            logging.error ('###### OTHER ERROR IN CALLING URL '+str(e))
+            response = str(e)
+            timeout = False
+    ### SOME OTHER ERROR HANDLING
+    if 'Erreur : Impossible de se conne' in response:
+        response = 'Error 500:' 
     response = parsePossibleErrors(response)
     return response
 
@@ -416,6 +425,9 @@ def callAPIURL(URL):
         return 'ERROR'
     if response != '':
         return response
+    #### TODO: REMOVE THIS LINE
+    else:
+        return 'NOT FOUND'
     logging.debug ('###### THERE WAS NO RESPONSE FROM DB SO I MIGHT AS WELL CALL THE API')
     successCall = False
     while not successCall:
@@ -424,7 +436,7 @@ def callAPIURL(URL):
         ### WE TRY CALLING WITH ACCOUNT
         ### -------------------------------------------------
         ### CONVERT URL TO ANON AND CALL IT
-        anonURL = re.sub(r"&ssid=\w*","&ssid=",URL)
+        anonURL = re.sub(r'&ssid=\w*','&ssid=',URL)
         logging.debug ('###### CALLING AS ANON')
         response = doV2URLRequest(anonURL)
         if response == 'FAILED' or response == 'QUOTA':
@@ -796,11 +808,19 @@ def callAPI(URL, API, PARAMS, CURRSSID,Version='',tolog=''):
         a = '{'+response.split('{', 1)[1]
         response = a.rsplit('}', 1)[0] + '}'
         try:
-            retJson = json.loads(response)
+            result = response.replace('\x0d\x0a','\\r\\n').replace('\x0a','').replace('\x09','').replace('\x0b','').replace('  ','').replace('\r','')
+            retJson = json.loads(result)
         except:
             logging.debug ('###### THE RETURN JSON IS NOT VALID, WILL TRY TO FIX')
             err = response.rfind ('],')
-            new_response = response[:err] + "]" + response[err+2:]
+            if err > len(response)-20:
+                logging.debug ('###### HARD FIXING A SCREENSCRAPER BUG A STARY COMMA NEAR THE END AFTER A ]')
+                result = response[:err] + "]" + response[err+2:]
+            if '#jsonrominfo' in result:
+                logging.debug ('###### HARD FIXING ANOTHER SCREENSCRAPER BUG, #JSONROMINFO NOT NEEDED')
+                result = result.replace('#jsonrominfo','')
+                logging.debug ('###### '+str(result))
+            new_response = result.replace('\x0d\x0a','\\r\\n').replace('\x0a','').replace('\x09','').replace('\x0b','').replace('  ','').replace('\r','')
             retJson = json.loads(new_response)
     else:
         logging.error ('###### CHECK RESPONSE '+str(response))
@@ -818,14 +838,19 @@ def callAPI(URL, API, PARAMS, CURRSSID,Version='',tolog=''):
             kocalls = myJson['ssuser']['requestskotoday']
             komax = myJson['ssuser']['maxrequestskoperday']
             logging.debug ('###### V2 QUOTA INFO - OK CALLS '+str(okcalls)+' KO CALLS '+str(kocalls)+' OK MAX '+str(okmax)+' KO MAX '+str(komax))
-            if int(okcalls) >= int(okmax) or int(kocalls) >= int(komax):
+            if int(okcalls) > int(okmax) or int(kocalls) > int(komax):
                 VTWOQUOTA = True
                 logging.debug('###### MAXIMUM DAILY QUOTA IS OVER')
                 return 'QUOTA'
             else:
                 VTWOQUOTA = False
         except Exception as e:
-            logging.error ('###### ERROR IN GETTING INFORMATION FROM RESPONSE // PORBABLY ANON CALL, NOTHING TO WORRY ABOUT '+str(e))
+            if 'ssuser' in str(e):
+                logging.info ('###### ERROR IN GETTING INFORMATION FROM RESPONSE // PROBABLY ANON CALL [SSUSER MISSING] , NOTHING TO WORRY ABOUT '+str(e))
+            elif 'requests' in str(e):
+                logging.info ('###### ERROR IN GETTING QUOTA INFORMATION IN RESPONSE '+str(e))
+            else:
+                logging.error ('###### ERROR IN GETTING RESPONSE '+str(e))
     return myJson
     
 
@@ -1315,7 +1340,7 @@ def md5(fname):
     dbval = lookupHashInDB(fname,'MD5')
     if dbval !='' and dbval != None:
         logging.debug('###### FOUND SOMETHING IN DB FOR '+fname+' SO RETURNING MD5='+str(dbval))
-        return dbval
+        return dbval.upper()
     logging.debug ('###### NOT IN DB SO CALCULATING MD5 OF FILE '+fname)
     try:
         retval = None
@@ -1327,7 +1352,7 @@ def md5(fname):
         retval = hash_md5.hexdigest()
         logging.debug('###### CALCULATED MD5 FOR '+fname+' '+str(retval))
         insertHashInDB(fname,'MD5',retval)
-        return retval
+        return retval.upper()
     except Exception as e:
         logging.error('###### COULD NOT CALCULATE MD5 ' + str(e))
         return ''
@@ -1337,7 +1362,7 @@ def sha1(fname):
     dbval = lookupHashInDB(fname,'SHA1')
     if dbval !='' and dbval != None:
         logging.debug ('###### FOUND SHA1 '+str(dbval)+' FOR FILE '+fname)
-        return dbval
+        return dbval.upper()
     logging.debug ('###### NOT IN DB SO CALCULATING SHA1 OF FILE '+fname)
     try:
         retval = None
@@ -1352,7 +1377,7 @@ def sha1(fname):
         retval = hasher.hexdigest()
         logging.debug ('###### SHA 1 '+str(retval)+' CALCULATED FOR FILE '+fname)
         insertHashInDB(fname,'SHA1',retval)
-        return retval
+        return retval.upper()
     except Exception as e:
         logging.error('###### COULD NOT CALCULATE SHA1 ' + str(e))
         return ''
@@ -1362,7 +1387,7 @@ def crc(fileName):
     dbval = lookupHashInDB(fileName,'CRC')
     if dbval !='' and dbval != None:
         logging.debug ('###### FOUND CRC '+str(dbval)+' FOR FILE '+fileName)
-        return dbval
+        return dbval.upper()
     logging.debug ('###### NOT IN DB SO CALCULATING CRC OF FILE '+fileName)
     try:
         retval = None
@@ -1372,7 +1397,7 @@ def crc(fileName):
         retval = "%X" % (prev & 0xFFFFFFFF)
         insertHashInDB(fileName,'CRC',retval)
         logging.debug ('###### CALUCLATED CRC '+str(retval)+' FOR FILE '+fileName)
-        return retval
+        return retval.upper()
     except Exception as e:
         logging.error('COULD NOT CALCULATE CRC ' + str(e))
         return ''
@@ -1521,12 +1546,14 @@ def processDir(dir,path,CURRSSID,extensions,sysid):
     except Exception as e:
         logging.error('###### COULD NOT CHANGE TO DIRECTORY '+path+'/'+dir+' PLEASE VERIFY')
         return None
-    schextensions = '**[.zip'
-    for exten in extensions:
-        schextensions = schextensions+'|'+exten
-    schextensions = schextensions +']'
-    filelist = sorted(glob.glob(schextensions))
-    logging.info ('###### FOUND '+str(len(filelist))+' FILES WITH EXTENSIONS '+schextensions)
+   
+    filelist = []
+    filelist.extend(sorted(glob.glob('*.*')))
+    for file in filelist:
+        extens = file[file.rindex('.'):]
+        if extens not in extensions:
+            filelist.remove(file)
+    logging.info ('###### FOUND '+str(len(filelist))+' FILES WITH EXTENSIONS '+str(extensions))
     gameinfo = None
     for file in filelist:
         procfile = file
@@ -1634,15 +1661,14 @@ def getRomFiles(path,acceptedExtens):
         return 1
     try:
         ### CREATE SEARCH EXPRESSION FOR FILES, BASED ON EXTENSIONS, AGAIN ZIP IS ADDED BY DEFAULT, IN TIS CASE TO FACILITATE ITERATION
-        schextensions = '**[.zip'
-        ### GO THROUGH ALL ACCEPTED EXTENSIONS AND ADD THEM TO THE SEARCH EXPRESSION
-        for exten in acceptedExtens:
-            schextensions = schextensions+'|'+exten
-        ### CLOSE THE BRACKETS
-        schextensions = schextensions +']'
+        filelist = []
+        filelist.extend(sorted(glob.glob('*.*')))
+        for file in filelist:
+            extens = file[file.rindex('.'):]
+            if extens not in acceptedExtens:
+                filelist.remove(file)
         ### GET THE LIST OF FILES THAT COMPLY WITH THE ACCEPTED EXTENSIONS (PLUS ZIP, REMEMBER)
-        filelist = sorted(glob.glob(schextensions))
-        logging.info ('###### FOUND '+str(len(filelist))+' FILES WITH EXTENSIONS '+schextensions)
+        logging.info ('###### FOUND '+str(len(filelist))+' FILES WITH EXTENSIONS '+str(acceptedExtens))
     except Exception as e:
         ### FOR SOME REASON SOMETHING WENT WRONG WHEN SEARCHING FOR FILES SO LET EVERYONE KNOW`
         logging.error('###### THERE ARE NO FILES IN DIRECTORY ' + path + str(e))
@@ -1749,7 +1775,7 @@ def deleteFromDB(sha1):
             logging.error ('###### WAITING AND RETRYING')
             sleep(60)
     sql = "DELETE FROM hashes WHERE hash = %s"
-    val = (sha1, )
+    val = (sha1.lower(), )
     try:
         mycursor.execute(sql, val)
         result = mycursor.fetchall()
@@ -1820,26 +1846,27 @@ def locateShainDB(mysha1='None',mymd5='None',mycrc='None',filename=''):
             LEFT JOIN games g2  on g2.id = gr.gameid\n\
             LEFT JOIN systems sm on sm.id = g2.system\n\
             LEFT JOIN editors ed on ed.id = g2.editeur\n\
-            LEFT JOIN gameDates gd on gd.id = gr.gameid where gr.romsha1 = %s or gr.rommd5 = %s or gr.romcrc =%s) as gameinfo"
+            LEFT JOIN gameDates gd on gd.gameid = gr.gameid where gr.romsha1 = %s or gr.rommd5 = %s or gr.romcrc =%s) as gameinfo"
     val = (mysha1,mymd5,mycrc)
     connected = False
     logging.debug ('###### TRYING TO QUERY DB TO SEARCH HASHES ')
     try:
         mycursor.execute(sql, val)
+    except Exception as e:
+        logging.error ('###### CANNOT QUERY DB '+str(e))
         logging.debug ('@@@@@@@@@@ '+str(mycursor.statement))
-        if mycursor.rowcount != 0:
-            if mycursor.rowcount == 1:
-                logging.debug ('###### I\'VE FOUND WHAT YOU\'RE LOOKING FOR IN THE V2 DB')
-                result = mycursor.fetchall()[0][0].replace('\r\n', '\\r\\n')
-                logging.debug ('###### WE DID FIND SOMETHING '+result)
+    ### PROBABLY ERROR HERE, TO TEST      
+    if mycursor.rowcount != 0:
+        if mycursor.rowcount == 1:
+            logging.debug ('###### I\'VE FOUND WHAT YOU\'RE LOOKING FOR IN THE V2 DB')
+            result = mycursor.fetchall()[0][0]
+            if result != None:
+                ###### NEED TO REPLACE EOL CHARACRTES WITH DOUBLE BACKSLASH ESCAPED EQUIVALENT FOR DICT CONVERSION TO WORK
+                result = result.replace('\x0d\x0a','\\r\\n').replace('\x0a','').replace('\x09','').replace('\x0b','').replace('  ','').replace('\r','')
+                logging.debug ('###### WE DID FIND SOMETHING '+repr(result))
                 try:
                     logging.debug ('##### ENCODING RESULT')
-                    if isinstance(result,str):
-                        logging.debug ('##### IT IS A STRING')
-                        result = result.encode('utf-8','replace')
-                    else:
-                        logging.debug ('##### IT IS NOT A STRING')
-                        result = result.encode('utf-8','replace')
+                    result = result.encode('utf-8','replace')
                 except Exception as e:
                     logging.error ('###### CANNOT ENCODE '+str(e))
                 try:
@@ -1847,73 +1874,86 @@ def locateShainDB(mysha1='None',mymd5='None',mycrc='None',filename=''):
                     myres = json.loads(result)
                 except Exception as e:
                     logging.debug ('###### CONVERTING VIA AST '+str(e))
-                    myres = ast.literal_eval(result)
+                    try:
+                        myres = ast.literal_eval(result)
+                    except Exception as e:
+                        logging.error ('###### CANNOT CONVERT VIA AST '+str(e)+' RETURNING NOTHING')
+                        sys.exit()
+                        return ''
                 logging.debug ('###### GOT A RESULT AND I\'M RETURNING IT')
                 return myres
             else:
-                logging.error ('###### I\'VE FOUND MORE THAN A SINGLE RESULT, THIS SHOULD NOT BE HAPPENING')
-                logging.error ('###### THIS IS THE QUERY ')
-                logging.error ('@@@@@@@@@@ '+str(mycursor.statement))
-                return 'ERROR'
+                logging.debug ('###### WE DID NOT FIND ANYTHING IN THE NEW DB')
         else:
-            logging.debug ('###### NO DATA FOUND IN V2 DB GOING TO GO TO OLD DB ')
-            ### I'M GOING TO CALL THE OLD DATABASE JUST IN CASE SO I CAN MIGRATE THIS ROM TO THE NEW DB
-            ### THIS WILL HAVE TO BE EVENTUALLY REMOVED WHEN EVERYTHING IS MIGRATED TO V2
-            sql = 'SELECT response FROM hashes WHERE hash=%s'
-            val=(mysha1,)
-            try:
-                mycursor.execute(sql, val)
-                logging.debug ('@@@@@@@@@@ '+str(mycursor.statement))
-                if mycursor.rowcount == 0:
-                    logging.debug ('###### NOTHING WAS FOUND IN THE NEW DB')
-                    return ''
-                else:
-                    resulr = None
-                    result = mycursor.fetchall()
-                    result = result[0][0]
-                    if result == None:
-                        logging ('###### ACTUALLY NOTHING HAS BEEN FOUND, SO SKIPPING UPDATE')
-                    else:
-                        result = str(result).encode('utf-8')
-                        logging.debug ('###### WE DID FIND SOMETHING, MIGRATE TO NEW DB '+str(result))
-                        #### TODO INSERT
-                        try:
-                            logging.debug ('###### CONVERTING VIA JSON')
-                            myres = json.loads(result)
-                        except:
-                            logging.debug ('###### CONVERTING VIA AST')
-                            myres = ast.literal_eval(result)
-                        logging.debug ('###### CREATING ROM OBJECT')
-                        myRom={'romfilename':filename,'romsha1':mysha1,'romcrc':mycrc,'rommd5':mymd5,'beta':'0','demo':'0','proto':'0','trad':'0','hack':'0','unl':'0','alt':'0','best':'0','netplay':'0'}
-                        myRoms = [myRom]
-                        try:
-                            logging.debug ('###### GETTING GAME ID')
-                            gameid = myres['jeu']['id']
-                            logging.debug ('###### GOT '+str(gameid))
-                        except:
-                            logging.debug ('###### CANNOT, DEFAULTING TO 0')
-                            gameid = 0
-                        if gameid != 0:
-                            logging.debug ('###### TRYING TO INSERT IN NEW DB')
-                            insertGameRomsInDB(gameid,myRoms)
-                            logging.debug ('###### COULD INSERT IT - COMMITING')
-                            mydb.commit()
-                        return result
-            except Exception as e:
-                logging.error ('###### ERROR LOOKING IN OLD DB '+str(e))
-                return ''
-            if result[0][0] == None:
-                return ''
-            else:
-                return result[0][0].encode('utf-8')
-
-
-
+            logging.error ('###### I\'VE FOUND MORE THAN A SINGLE RESULT, THIS SHOULD NOT BE HAPPENING')
+            logging.error ('###### THIS IS THE QUERY ')
+            logging.error ('@@@@@@@@@@ '+str(mycursor.statement))
+            return 'ERROR'
+    logging.debug ('###### NO DATA FOUND IN V2 DB GOING TO GO TO OLD DB ')
+    ### I'M GOING TO CALL THE OLD DATABASE JUST IN CASE SO I CAN MIGRATE THIS ROM TO THE NEW DB
+    ### THIS WILL HAVE TO BE EVENTUALLY REMOVED WHEN EVERYTHING IS MIGRATED TO V2
+    sql = 'SELECT response FROM hashes WHERE hash=%s'
+    val=(mysha1.lower(),)
+    try:
+        mycursor.execute(sql, val)
+        logging.debug ('@@@@@@@@@@ '+str(mycursor.statement))
     except Exception as e:
-        ###logging.debug ('@@@@@@@@@@ '+str(mycursor.statement))
-        logging.error ('###### CANNOT QUERY THE DB DUE TO ERROR - '+str(e))
+        logging.error ('###### ERROR LOOKING IN OLD DB '+str(e))
         return ''
-
+    if mycursor.rowcount == 0:
+        logging.debug ('###### NOTHING WAS FOUND IN THE OLD DB')
+        return ''
+    else:
+        result = None
+        result = mycursor.fetchall()
+        result = result[0][0]
+        if result == None:
+            logging ('###### ACTUALLY NOTHING HAS BEEN FOUND, SO SKIPPING UPDATE')
+            return ''
+        try:
+            if isinstance(result,str):
+                result = result.encode('utf-8').decode('ascii','replace')
+            else:
+                result = result.decode('ascii','replace')
+        except Exception as e:
+            logging.error ('####### ERROR DECODING RESULT STRING '+str(e))
+            sys.exit()
+            return ''
+        logging.debug ('###### WE DID FIND SOMETHING, MIGRATE TO NEW DB ')
+        try:
+            logging.debug ('###### CONVERTING VIA JSON')
+            myres = json.loads(result)
+        except Exception as e:
+            logging.debug ('###### CONVERTING VIA JSON FAILED '+str(e))
+            logging.debug ('###### CONVERTING VIA AST')
+        try:
+            myres = ast.literal_eval(result)
+        except Exception as e:
+            logging.debug ('###### CONVERTING VIA AST FAILED '+str(e))
+            sys.exit()
+            return ''
+        logging.debug ('###### CREATING ROM OBJECT')
+        try:
+            myRom={'romfilename':filename,'romsha1':mysha1.upper(),'romcrc':mycrc.upper(),'rommd5':mymd5.upper(),'beta':'0','demo':'0','proto':'0','trad':'0','hack':'0','unl':'0','alt':'0','best':'0','netplay':'0'}
+            myRoms = [myRom]
+        except Exception as e:
+            logging.error ('###### COULD NOT CREATE ROM OBJECT '+str(e))
+            return ''
+        try:
+            logging.debug ('###### GETTING GAME ID')
+            gameid = myres['jeu']['id']
+            logging.debug ('###### GOT '+str(gameid))
+        except:
+            logging.debug ('###### CANNOT GET GAME ID '+str(e))
+            return ''
+        logging.debug ('###### TRYING TO INSERT GAME IN NEW DB ')
+        insertGameInLocalDb (myres['jeu'])
+        logging.debug ('###### TRYING TO INSERT ROM IN NEW DB')
+        insertGameRomsInDB(gameid,myRoms)
+        logging.debug ('###### COULD INSERT IT - COMMITING')
+        mydb.commit()
+        return result
+    
 def updateDB(mysha1,response):
     logging.debug ('###### CALLED UPDATE DB WITH RESPONSE '+str(response))
     if response == 'ERROR':
@@ -2111,7 +2151,7 @@ def getGameInfo(CURRSSID, pathtofile, file, mymd5, mysha1, mycrc, sysid):
         else:
             logging.debug ('###### GOT ANSWER FROM API, UPDATING DB')
             #logging.debug ('###### RESPONSE TO UPDATE '+str(response))
-            updateDB (mysha1,response)
+            #updateDB (mysha1,response)
     ### SO NOW WE HAVE A RESPONSE, LET'S TREAT IT
     ### WE ASSUME THE ROM WAS NOT FOUND
     foundRom = False
@@ -2120,7 +2160,7 @@ def getGameInfo(CURRSSID, pathtofile, file, mymd5, mysha1, mycrc, sysid):
     if response == 'QUOTA':
         logging.error ('###### GONE OVER QUOTA')
         return file,response
-    if response == 'ERROR':
+    if (response == 'ERROR') or (response == 'NOT FOUND'):
         ### YES THERE IS
         logging.debug('###### API GAVE ERROR BACK, CREATING EMPTY DATA '+str(response))
         ### SO WE CREATE AN EMPTY ANSWER AND RETURN IT
@@ -2164,9 +2204,13 @@ def getSystemForRom(rom,sysid):
     if romInfo == '' or romInfo == 'QUOTA' or romInfo == 'ERROR':
         return None 
     try:
-        romInfo=ast.literal_eval(romInfo)
-    except:
-        logging.error ('###### CANNOT CONVERT TO DICT')
+        if not isinstance(romInfo,dict):
+            logging.debug ('###### WE DID NOT GET A DICT - CONVERTING')
+            romInfo=ast.literal_eval(romInfo)
+        else: 
+            logging.debug ('###### WE ALREADY GOT A DICT - NO NEED TO CONVERT')
+    except Exception as e:
+        logging.error ('###### CANNOT CONVERT TO DICT '+str(e))
     if romInfo :
         logging.debug ('###### WE CAN PROCESS THE ROM INFO')
         try:
@@ -2187,69 +2231,112 @@ def getSystemForRom(rom,sysid):
 
 def copyRoms (systemid,systemname,path,CURRSSID,extensions,outdir):
     ### COPY ROMS FOR SYSTEM ID IN PATH TO OUTDIR WITH NEW PATH AS SYSTEM WHERE THE ROM BELONGS TO
+    commcount = 0
+    foundSys = []
     if outdir[-1:] != '/':
         outdir = ourdir + '/'
     logging.info ('###### GOING TO COPY TO DIRECTORY '+outdir)
-    logging.debug ('###### GOING TO GET FILE LIST FOR PATH')
+    logging.debug ('###### GOING TO GET FILE LIST FOR PATH ['+str(extensions)+']')
     filelist = getRomFiles(path,extensions)
     logging.debug ('###### GOING TO ITERATE THROUGH FILES AND SEE WHERE THEY BELONG')
     if path[-1:] != '/':
         path = path + '/'
     for file in filelist:
-        logging.debug ('####### GOING TO PROCESS SORT FOR FILE '+file)
-        romSys = getSystemForRom(path+file,systemid)
+        commcount = commcount +1
+        if commcount == 50:
+            mydb.commit()
+            commcount = 0
+        newsys = dict()
+        origfile = path+file
+        logging.debug ('####### GOING TO PROCESS SORT FOR FILE '+origfile)
+        romSys = getSystemForRom(origfile,systemid)
         logging.debug ('###### SYSTEM FOR ROM IS '+str(romSys))
         if romSys:
             origsystem = getSystemName(systemid).lower().replace(' ','')
-            origfile = path+file
             ### DESTINATION FILES
-            videofile = 'videos/'+sha1(file)+'-video.mp4'
-            imagefile = 'images/'+sha1(file)+'-image.png'
+            videofile = 'videos/'+sha1(origfile)+'-video.mp4'
+            imagefile = 'images/'+sha1(origfile)+'-image.png'
             bezelfile = file[:file.rindex('.')]+'.cfg'
-            destfile = outdir+romSys.lower().replace(' ','')+'/'+file
+            newsys['name']=romSys.lower().replace(' ','').replace('.','')
+            newsys['fullname']=romSys
+            newsys['path']=outdir+newsys['name']
+            newsys['extension']=str(extensions)
+            newsys['command']=''
+            newsys['platform']=newsys['name']
+            newsys['theme']=newsys['name']
+            newsys['ssname']=newsys['name']
+            if newsys not in foundSys:
+                foundSys.append(newsys)
+            destfile = newsys['path']+'/'+file
             logging.debug ('###### GOING TO COPY ROM '+origfile+' TO '+destfile)
             destpath = destfile[:destfile.rindex('/')]
             if not os.path.isdir(destpath):
-                os.mkdir(destpath)
+                try:
+                    os.mkdir(destpath)
+                except Exception as e:
+                    logging.error ('###### COULD NOT CREATE DIRECTORY '+str(e))
             destpath = destpath + '/' + origsystem + '/'
             destfile = destpath + file
             if not os.path.isdir(destpath):
-                os.mkdir(destpath)
+                try:
+                    os.mkdir(destpath)
+                except Exception as e:
+                    logging.error ('###### COULD NOT CREATE DIRECTORY '+str(e))
             destvidpath = destpath+'videos/'
             if not os.path.isdir(destvidpath):
-                os.mkdir(destvidpath)
+                try:
+                    os.mkdir(destvidpath)
+                except Exception as e:
+                    logging.error ('###### COULD NOT CREATE DIRECTORY '+str(e))
             destimgpath = destpath+'images/'
             if not os.path.isdir(destimgpath):
-                os.mkdir(destimgpath)
-            try:
-                if (not os.path.isfile(destfile)):
+                try:
+                    os.mkdir(destimgpath)
+                except Exception as e:
+                    logging.error ('###### COULD NOT CREATE DIRECTORY '+str(e))
+            if (not os.path.isfile(destfile)):
+                logging.debug ('###### DESTINATION FILE DOES NOT EXISTS, GOING TO COPY')
+                try:
+                    logging.debug ('###### TRYING')
+                    copyfile(origfile,destfile)
+                except Exception as e:
+                    logging.error ('###### ERROR COPYING FILE '+str(e))
+            else:
+                if (os.stat(origfile).st_size != os.stat(destfile).st_size):
+                    logging.debug ('###### DESTINATION FILE EXISTS BUT SIZE DIFFERS, GOING TO COPY')
                     copyfile(origfile,destfile)
                 else:
-                    if (os.stat(origfile).st_size != os.stat(destfile).st_size):
-                        copyfile(origfile,destfile)
-                    else:
-                        logging.info ('###### FILE '+destfile+' ALREADY EXISTS')
-                    thisfile = path+videofile
-                    thisdfile = destpath+videofile
-                    if os.path.isfile(thisfile):
-                        logging.debug ('###### GOING TO COPY VIDEO '+thisfile+' TO '+thisdfile)
+                    logging.info ('###### FILE '+destfile+' ALREADY EXISTS')
+                thisfile = path+videofile
+                thisdfile = destpath+videofile
+                if os.path.isfile(thisfile):
+                    logging.debug ('###### GOING TO COPY VIDEO '+thisfile+' TO '+thisdfile)
+                    try:
+                        logging.debug ('###### TRYING ')
                         copyfile(thisfile,thisdfile)
-                    thisfile = path+imagefile
-                    thisdfile = destpath+imagefile
-                    if os.path.isfile(thisfile):
-                        logging.debug ('###### GOING TO COPY IMAGE '+thisfile+' TO '+thisdfile)
+                    except Exception as e:
+                        logging.error ('###### COULD NOT COPY VIDEO '+str(e))
+                thisfile = path+imagefile
+                thisdfile = destpath+imagefile
+                if os.path.isfile(thisfile):
+                    logging.debug ('###### GOING TO COPY IMAGE '+thisfile+' TO '+thisdfile)
+                    try:
+                        logging.debug ('###### TRYING')
                         copyfile(thisfile,thisdfile)
-                    thisfile = path+bezelfile
-                    thisdfile = destpath+bezelfile
-                    if os.path.isfile(thisfile):
-                        logging.debug ('###### GOING TO COPY BEZEL CONFIG '+thisfile+' TO '+thisdfile)
+                    except Exception as e:
+                        logging.error ('####### COULD NOT COPY IMAGE '+str(e))
+                thisfile = path+bezelfile
+                thisdfile = destpath+bezelfile
+                if os.path.isfile(thisfile):
+                    logging.debug ('###### GOING TO COPY BEZEL CONFIG '+thisfile+' TO '+thisdfile)
+                    try:
+                        logging.debug ('###### TRYING')
                         copyfile(thisfile,thisdfile)
-            except Exception as e:
-                logging.error ('####### COULD NOT COPY '+origfile+' DUE TO '+str(e))
+                    except Exception as e:
+                        logging.error ('###### COULD NOT COPY BEZEL '+str(e))
         else:
             logging.error ('###### FAILED TO COPY ROM '+origfile+' TO DESTINATION')
-        sys.exit()
-    return ''
+    return foundSys
 
 
 def scrapeRoms(CURRSSID,sortRoms=False,outdir=''):
@@ -2259,6 +2346,8 @@ def scrapeRoms(CURRSSID,sortRoms=False,outdir=''):
         tree.parse(xml_file)
     ### GET ALL SYSTEMS IN THE CONFIG FILE
     systems = getAllSystems(CURRSSID)
+    if sortRoms == True:
+        newSystems = []
     ### CHECK IF WE HVAE SYSTEMS OR NOT
     if systems == '':
         logging.error('###### CANNOT RETRIEVE SYSTEM LIST, EXITING')
@@ -2323,7 +2412,11 @@ def scrapeRoms(CURRSSID,sortRoms=False,outdir=''):
                     logging.info ('###### DOING SYSTEM ' + str(path)+ ' looking for extensions '+str(extensions))
                     ### SO WE START WITH THE SYSTEM PROCESSING
                     if sortRoms :
-                        copyRoms (systemid,systemname,path,CURRSSID,extensions,outdir)
+                        fetchedSystems = copyRoms (systemid,systemname,path,CURRSSID,extensions,outdir)
+                        for fsys in fetchedSystems:
+                            logging.debug ('###### ADDING FOUND SYSTEMS TO EXISTING ONES')
+                            if fsys not in newSystems:
+                                newSystems.append(fsys)      
                     else:
                         grabData(systemid, path, CURRSSID,extensions)
                     ### WE GO TO NEXT USER INFO
@@ -2335,6 +2428,8 @@ def scrapeRoms(CURRSSID,sortRoms=False,outdir=''):
             else:
                 logging.info ('###### SKIPPING SYSTEM')
     logging.info ('----------------- ALL DONE -------------------')
+    if sortRoms:
+        return newSystems
 
 def updateGameID (file,sha,gameid):
     if gameid != '':
@@ -2882,7 +2977,7 @@ def lookUpROMinDB (romsha1,romcrc,rommd5):
     sqlst = 'select gameid from gameRoms gr where romsha1 = "'+romsha1+'" or romcrc = "'+romcrc+'" or rommd5 ="'+rommd5+'"'
     results = executeSQL(sqlst)
     logging.debug ('###### RESULT FROM DB QUERY LOOKUP ROM '+str(results))
-    sys.exit()
+    return results
 
 def renameFiles():
     logging.info ('###### - STARTING FILE RENAMING PROCESS')
@@ -2931,6 +3026,7 @@ def executeSQL(sqlst):
             result =  mycursor.fetchall()
         else:
             logging.debug('###### IT IS NOT SELECT ')
+            logging.debug('###### '+sqlst)
             mycursor.execute(sqlst)
             result = True
             logging.info ('###### DB UPDATED OK')
@@ -2940,7 +3036,7 @@ def executeSQL(sqlst):
     return result
 
 def insertDataInLocalDB(obj,table):
-    sqlst= 'INSERT INTO '+table+' '
+    sqlst= 'REPLACE INTO '+table+' '
     columns = ''
     values = ''
     for key in obj.keys():
@@ -2956,17 +3052,20 @@ def insertDataInLocalDB(obj,table):
 def insertSystemInLocalDb(system):
     sqlst = 'SELECT id FROM systems WHERE id = '+str(system['id'])
     result = executeSQL (sqlst)
-    logging.debug ('###### SQL RESULT FROM EDITORS EQUALS '+str(result))
-    if (not result):
-        logging.info ('###### GOING TO UPDATE EDITORS TABLE')
- 	sqlst = 'INSERT INTO systems (id,text) values ('+str(system['id'])+',"'+system['noms']['nom_eu']+'")'
-        executeSQL (sqlst)
+    logging.debug ('###### SQL RESULT FROM SYSTEMS EQUALS '+str(result))
+    if (not result) or result == []:
+        logging.info ('###### GOING TO UPDATE SYSTEMS TABLE')
+        sqlst = 'INSERT INTO systems (id,`text`,`type`) values ('+str(system['id'])+',"'+system['noms']['nom_eu']+'","'+system['type']+'")'
+    else:
+        sqlst = 'UPDATE systems SET `text`="'+system['noms']['nom_eu']+'",`type`="'+system['type']+'" where id = '+str(system['id'])
+    executeSQL (sqlst)
+    mydb.commit()
 
 def insertEditorInLocalDb(edid,edname):
     sqlst = 'SELECT text FROM editors WHERE id = '+str(edid)
     result = executeSQL (sqlst)
     logging.debug ('###### SQL RESULT FROM EDITORS EQUALS '+str(result))
-    if (not result):
+    if (not result) or result == []:
         logging.info ('###### GOING TO UPDATE EDITORS TABLE')
         if len(edname) >  100:
 	    edname = edname[:99]
@@ -2974,61 +3073,101 @@ def insertEditorInLocalDb(edid,edname):
         executeSQL (sqlst)
 
 def insertGameNamesInDB(id,names):
+    if not isinstance(names,list):
+        new_names=[]
+        for key in names.keys():
+            myname=dict()
+            myname['region']=key
+            myname['text']= names[key]
+            new_names.append(myname)
+        names = new_names
+        logging.debug('###### NAMES CONVERTED TO '+str(names))
+    logging.debug ('###### GOING TO INSERT NAMES IN DB '+str(names))
     for name in names:
-        sqlst = 'INSERT INTO gameNames (gameid,region,text) VALUES ('+str(id)+',"'+name['region']+'","'+name['text']+'")'
-        executeSQL(sqlst)
+        try:
+            sql = 'SELECT id FROM gameNames where gameid='+str(id)+' and region ="'+name['region']+'"'
+        except:
+            logging.debug ('###### THERE WAS AN ERROR GETTING NAMES')
+            return
+        result = executeSQL(sql)
+        logging.debug('###### GOT RESULT FROM SYNOPSIS CHECK '+str(result))
+        if result == None or result == []:
+            sqlst = 'INSERT INTO gameNames (gameid,region,text) VALUES ('+str(id)+',"'+name['region']+'","'+name['text']+'")'
+            executeSQL(sqlst)
 
 def insertSynopsisInDB(id,synopsis):
     for syn in synopsis:
-        sqlst = 'INSERT INTO gameSynopsis (gameid,langue,text) VALUES ('+str(id)+',"'+syn['langue']+'","'+syn['text']+'")'
-        executeSQL(sqlst)
+        sql = 'SELECT id FROM gameSynopsis where gameid='+str(id)+' and langue ="'+syn['langue']+'"'
+        result = executeSQL(sql)
+        logging.debug('###### GOT RESULT FROM SYNOPSIS CHECK '+str(result))
+        if result == None or result == []:
+            sqlst = 'INSERT INTO gameSynopsis (gameid,langue,text) VALUES ('+str(id)+',"'+syn['langue']+'","'+syn['text']+'")'
+            executeSQL(sqlst)
 
 def insertGameRomsInDB(id,roms):
     logging.debug ('###### INSERTIMG ROMS IN DB')
     for rom in roms:
-        sqlst = 'INSERT INTO gameRoms (romfilename,romsha1,romcrc,rommd5,beta,demo,proto,trad,hack,unl,alt,best,netplay,gameid) VALUES ('
-        sqlst = sqlst + '"' +rom['romfilename']+ '",'
-        sqlst = sqlst + '"' +rom['romsha1']+ '",'
-        sqlst = sqlst + '"' +rom['romcrc']+ '",'
-        sqlst = sqlst + '"' +rom['rommd5']+ '",'
-        sqlst = sqlst + str(rom['beta'])+","
-        sqlst = sqlst + str(rom['demo'])+","
-        sqlst = sqlst + str(rom['proto'])+","
-        sqlst = sqlst + str(rom['trad'])+","
-        sqlst = sqlst + str(rom['hack'])+","
-        sqlst = sqlst + str(rom['unl'])+","
-        sqlst = sqlst + str(rom['alt'])+","
-        sqlst = sqlst + str(rom['best'])+","
-        sqlst = sqlst + str(rom['netplay'])+","
-        sqlst = sqlst + str(id)+")"
-        logging.debug ('###### GOING TO EXECUTE SQL')
-        executeSQL(sqlst)
+        sql = 'SELECT id FROM gameRoms where romsha1="'+rom['romsha1']+'"'
+        result = executeSQL(sql)
+        logging.debug('###### GOT RESULT FROM ROM CHECK '+str(result))
+        if result == None or result == []:
+            sqlst = 'INSERT INTO gameRoms (romfilename,romsha1,romcrc,rommd5,beta,demo,proto,trad,hack,unl,alt,best,netplay,gameid) VALUES ('
+            sqlst = sqlst + '"' +rom['romfilename']+ '",'
+            sqlst = sqlst + '"' +rom['romsha1']+ '",'
+            sqlst = sqlst + '"' +rom['romcrc']+ '",'
+            sqlst = sqlst + '"' +rom['rommd5']+ '",'
+            sqlst = sqlst + str(rom['beta'])+","
+            sqlst = sqlst + str(rom['demo'])+","
+            sqlst = sqlst + str(rom['proto'])+","
+            sqlst = sqlst + str(rom['trad'])+","
+            sqlst = sqlst + str(rom['hack'])+","
+            sqlst = sqlst + str(rom['unl'])+","
+            sqlst = sqlst + str(rom['alt'])+","
+            sqlst = sqlst + str(rom['best'])+","
+            sqlst = sqlst + str(rom['netplay'])+","
+            sqlst = sqlst + str(id)+")"
+            logging.debug ('###### GOING TO EXECUTE SQL')
+            executeSQL(sqlst)
 
 def insertGameMediasInDB(id,medias):
     counter = 0
     for media in medias:
-        sqlst = 'INSERT INTO gameMedias (type,url,region,format,cnt,gameid) VALUES ('
-        sqlst = sqlst + '"' +media['type']+ '",'
-        sqlst = sqlst + '"' +media['url']+ '",'
         try:
-            sqlst = sqlst + '"' +media['region']+ '",'
+            mediaregion = media['region']
         except:
-            sqlst = sqlst + '"UNK",'
-        sqlst = sqlst + '"' +media['format']+ '",'
-        sqlst = sqlst + str(counter)+","
-        sqlst = sqlst + str(gameid)+")"
-        executeSQL(sqlst)
-        counter = counter + 1
+            mediaregion = 'UNK'
+        try:
+            sql = 'SELECT id FROM gameMedias where gameid='+str(id)+' and region ="'+mediaregion+'" and type = "'+media['type']+'" and format="'+media['format']+'"'
+        except:
+            logging.error ('###### COUL NOT CREATE MEDIA QUERY '+str(e))
+            sys.exit()
+        result = executeSQL(sql)
+        logging.debug('###### GOT RESULT FROM SYNOPSIS CHECK '+str(result))
+        if result == None or result == []:
+            sqlst = 'INSERT INTO gameMedias (type,url,region,format,cnt,gameid) VALUES ('
+            sqlst = sqlst + '"' +media['type']+ '",'
+            sqlst = sqlst + '"' +media['url']+ '",'
+            sqlst = sqlst + '"' +mediaregion+ '",'
+            sqlst = sqlst + '"' +media['format']+ '",'
+            sqlst = sqlst + str(counter)+","
+            sqlst = sqlst + str(gameid)+")"
+            executeSQL(sqlst)
+            counter = counter + 1
 
 def insertGameDatesInDB(id,dates):
+    if not isinstance(dates,list):
+        logging.debug('###### DATES ARE NOT LIST '+str(dates))
+        sys.exit()
     for rdate in dates:
-        sqlst = 'INSERT INTO gameDates (text,region,gameid) VALUES ('
-        sqlst = sqlst + '"' +rdate['text']+ '",'
-        sqlst = sqlst + '"' +rdate['region']+ '",'
-        sqlst = sqlst + str(gameid)+")"
-        executeSQL(sqlst)
-
-
+        sql = 'SELECT id FROM gameDates where gameid='+str(id)+' and region ="'+rdate['region']+'"'
+        result = executeSQL(sql)
+        logging.debug('###### GOT RESULT FROM SYNOPSIS CHECK '+str(result))
+        if result == None or result == []:
+            sqlst = 'INSERT INTO gameDates (text,region,gameid) VALUES ('
+            sqlst = sqlst + '"' +rdate['text']+ '",'
+            sqlst = sqlst + '"' +rdate['region']+ '",'
+            sqlst = sqlst + str(gameid)+")"
+            executeSQL(sqlst)
 
 def insertGameInLocalDb(gameInfo):
     logging.debug ('###### GAMEINFO IS ')###+ str(gameInfo))
@@ -3041,21 +3180,21 @@ def insertGameInLocalDb(gameInfo):
     try:
         game['notgame'] = gameInfo['notgame']
     except Exception as e:
-        logging.error ('###### ATTRIBUTE '+str(e)+' NOT FOUND, CREATING DEFAULT FOR '+str(game['id']))
+        logging.error ('###### ATTRIBUTE NOTGAME NOT FOUND, CREATING DEFAULT FOR '+str(game['id']))
         game['notgame'] = False
     try:
         game['topstaff'] = gameInfo['topstaff']
         if game['topstaff'] == None:
             game['topstaff'] = 0
     except Exception as e:
-        logging.error ('###### ATTRIBUTE '+str(e)+' NOT FOUND, CREATING DEFAULT FOR '+str(game['id']))
+        logging.error ('###### ATTRIBUTE TOPSTAFF NOT FOUND, CREATING DEFAULT FOR '+str(game['id']))
         game['topstaff'] = 0
     try:
         game['rotation'] = gameInfo['rotation']
         if game['rotation'] == None:
             game['rotation'] = 0
     except Exception as e:
-        logging.error ('###### ATTRIBUTE '+str(e)+' NOT FOUND, CREATING DEFAULT FOR '+str(game['id']))
+        logging.error ('###### ATTRIBUTE ROTATION NOT FOUND, CREATING DEFAULT FOR '+str(game['id']))
         game['rotation'] = 0
     try:
         game['system'] = gameInfo['systeme']['id']
@@ -3063,44 +3202,50 @@ def insertGameInLocalDb(gameInfo):
         try:
             game['system'] = gameInfo['systemeid']
         except Exception as e:
-            logging.error ('###### ATTRIBUTE '+str(e)+' NOT FOUND, CREATING DEFAULT FOR '+str(game['id']))
+            logging.error ('###### ATTRIBUTE SYSTEMID NOT FOUND, CREATING DEFAULT FOR '+str(game['id']))
             game['system'] = 0
     try:
         game['editeur'] = gameInfo['editeur']['id']
         insertEditorInLocalDb(game['editeur'],gameInfo['editeur']['text'])
     except Exception as e:
-        logging.error ('###### ATTRIBUTE '+str(e)+' NOT FOUND, CREATING DEFAULT FOR '+str(game['id']))
+        logging.error ('###### ATTRIBUTE EDITOR NOT FOUND, CREATING DEFAULT FOR '+str(game['id']))
         game['editeur'] = 0
         insertEditorInLocalDb(game['editeur'],'Unknown')
     logging.debug ('###### GAME INFO IS '+str(game))
     insertDataInLocalDB(game,'games')
     try:
+        logging.debug ('###### NAMES ARE '+str(gameInfo['noms']))
         insertGameNamesInDB(game['id'],gameInfo['noms'])
-    except:
+    except Exception as e:
         logging.error ('###### COULD NOT FIND NAMES FOR THE GAME')
     try:
-        insertSynopsisInDB(game['id'],gameInfo['synopsis'])
-    except:
-        logging.error ('###### COULD NOT FIND SYNOPSIS FOR THE GAME')
+        synopsis = gameInfo['synopsis']
+    except Exception as e:
+        logging.error ('###### COULD NOT FIND SYNOPSIS FOR THE GAME -'+str(e)+' - DEFAULTING')
+        synopsis = [{'langue':'UNK','text':''}]
+    insertSynopsisInDB(game['id'],synopsis)
     try:
         insertGameRomsInDB(game['id'],  gameInfo['roms'])
-    except:
-        logging.error ('###### COULD NOT FIND ROMS FOR THE GAME')
+    except Exception as e:
+        logging.error ('###### COULD NOT FIND ROMS FOR THE GAME - LEAVING EMPTY '+str(e))
     try:
-        insertGameMediasInDB(game['id'],  gameInfo['medias'])
-    except:
-        logging.error ('###### COULD NOT FIND MEDIAS FOR THE GAME')
+        medias = gameInfo['medias']
+    except Exception as e:
+        logging.error ('###### COULD NOT FIND MEDIAS FOR THE GAME -'+str(e)+' - DEFAULTING')
+        medias = [{'type':'unk','url':'unk','region':'unk','format':'unk'}]
+    insertGameMediasInDB(game['id'],medias)
     try:
-        insertGameDatesInDB(game['id'],  gameInfo['dates'])
-    except:
-        logging.error ('###### COULD NOT FIND DATES FOR THE GAME')
+        dates = gameInfo['dates']
+    except Exception as e:
+        logging.error ('###### COULD NOT FIND DATES FOR THE GAME -'+str(e)+' - DEFAULTING')
+        dates = [{'region':'unk','text':'0'}]
+    insertGameDatesInDB(game['id'], dates)
     return
-
 
 def sortRoms(mainDir):
     logging.info ('###### STARTING ROM SORTING PROCESS, ORIGINAL ROMS WILL REMAIN UNTOUCHED')
-    scrapeRoms(CURRSSID,True,mainDir)
-    return ''
+    systems = scrapeRoms(CURRSSID,True,mainDir)
+    return systems
 
 if dbRename:
     ### Get all games from DB and rename filenames
@@ -3123,14 +3268,31 @@ if missing !='':
     ##sys.exit(0)
     scrapeRoms(CURRSSID)
 
+def createEsConfig(systems,dir):
+    if dir[-1:] != '/':
+        dir = dir +'/'
+    sysxml = '<systemList>\n'
+    for essystem in systems:
+        sysxml=sysxml+'\t<system>\n'
+        for key in essystem.keys():
+            logging.debug ('###### ADDING KEY '+str(key)+' WITH VALUE '+str(essystem[key]))
+            sysxml=sysxml+'\t\t<'+key+'>'+essystem[key]+'</'+key+'>\n'
+        sysxml=sysxml+'\t</system>\n'
+    sysxml = sysxml+'<systemList>'
+    f = open(dir+"es_systems.cfg", "w")
+    f.write(sysxml)
+    f.close() 
+    return 
+
+
 if sortroms !='':
     ### SORT YOUR ROMS, IT WILL TAKE YOUR PARAMETER AS DESTINATION DIRECTORY AND CREATE A STRUCTURE
     ### BASED ON THE SYSTEM THE ROM BELONGS TO
     logging.info ('###### GOING TO SORT YOUR ROMS')
-    sortRoms(sortroms)
+    systems = sortRoms(sortroms)
+    createEsConfig(systems,sortroms)
     logging.info ('###### FINSHED SORTING YOUR ROMS')
-    ##sys.exit(0)
-    scrapeRoms(CURRSSID)
+    sys.exit(0)
 
 if migrateDB:
     ###populate systems
@@ -3156,9 +3318,9 @@ if migrateDB:
             if response == 'NOT FOUND':
                 logging.error('###### ID '+str(gameid)+' DOES NOT SEEM TO EXIST IN SCREENSCRAPER')
         logging.debug ('####### RESPONSE FROM API CALL ')###+str(response))
-        if response != 'ERROR':
+        if response != 'ERROR' and response != 'NOT FOUND':
             logging.debug ('###### GOING TO INSERT GAMEID '+str(gameid)+' IN DB')
-            ##insertGameInLocalDb(response['jeu'])
+            insertGameInLocalDb(response['jeu'])
         if cnt == 50:
 	        mydb.commit()
 	        cnt = 0
@@ -3175,4 +3337,6 @@ if migrateDB:
 ## Default behaviour
 scrapeRoms(CURRSSID)
 sys.exit(0)
+
+
 

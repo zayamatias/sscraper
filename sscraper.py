@@ -1944,7 +1944,7 @@ def locateShainDB(mysha1='None',mymd5='None',mycrc='None',filename=''):
             gameid = myres['jeu']['id']
             logging.debug ('###### GOT '+str(gameid))
         except:
-            logging.debug ('###### CANNOT GET GAME ID '+str(e))
+            logging.error ('###### CANNOT GET GAME ID '+str(e))
             return ''
         logging.debug ('###### TRYING TO INSERT GAME IN NEW DB ')
         insertGameInLocalDb (myres['jeu'])
@@ -2234,13 +2234,14 @@ def copyRoms (systemid,systemname,path,CURRSSID,extensions,outdir):
     commcount = 0
     foundSys = []
     if outdir[-1:] != '/':
-        outdir = ourdir + '/'
+        outdir = outdir + '/'
     logging.info ('###### GOING TO COPY TO DIRECTORY '+outdir)
     logging.debug ('###### GOING TO GET FILE LIST FOR PATH ['+str(extensions)+']')
     filelist = getRomFiles(path,extensions)
     logging.debug ('###### GOING TO ITERATE THROUGH FILES AND SEE WHERE THEY BELONG')
     if path[-1:] != '/':
         path = path + '/'
+    logging.error ('###### STARTING SYSTEM '+str(systemname))
     for file in filelist:
         commcount = commcount +1
         if commcount == 50:
@@ -2254,6 +2255,8 @@ def copyRoms (systemid,systemname,path,CURRSSID,extensions,outdir):
         if romSys:
             origsystem = getSystemName(systemid).lower().replace(' ','')
             ### DESTINATION FILES
+            videoofile = 'videos/'+sha1(origfile).lower()+'-video.mp4'
+            imageofile = 'images/'+sha1(origfile).lower()+'-image.png'
             videofile = 'videos/'+sha1(origfile)+'-video.mp4'
             imagefile = 'images/'+sha1(origfile)+'-image.png'
             bezelfile = file[:file.rindex('.')]+'.cfg'
@@ -2307,35 +2310,39 @@ def copyRoms (systemid,systemname,path,CURRSSID,extensions,outdir):
                     copyfile(origfile,destfile)
                 else:
                     logging.info ('###### FILE '+destfile+' ALREADY EXISTS')
-                thisfile = path+videofile
-                thisdfile = destpath+videofile
-                if os.path.isfile(thisfile):
-                    logging.debug ('###### GOING TO COPY VIDEO '+thisfile+' TO '+thisdfile)
-                    try:
-                        logging.debug ('###### TRYING ')
-                        copyfile(thisfile,thisdfile)
-                    except Exception as e:
-                        logging.error ('###### COULD NOT COPY VIDEO '+str(e))
-                thisfile = path+imagefile
-                thisdfile = destpath+imagefile
-                if os.path.isfile(thisfile):
-                    logging.debug ('###### GOING TO COPY IMAGE '+thisfile+' TO '+thisdfile)
-                    try:
-                        logging.debug ('###### TRYING')
-                        copyfile(thisfile,thisdfile)
-                    except Exception as e:
-                        logging.error ('####### COULD NOT COPY IMAGE '+str(e))
-                thisfile = path+bezelfile
-                thisdfile = destpath+bezelfile
-                if os.path.isfile(thisfile):
-                    logging.debug ('###### GOING TO COPY BEZEL CONFIG '+thisfile+' TO '+thisdfile)
-                    try:
-                        logging.debug ('###### TRYING')
-                        copyfile(thisfile,thisdfile)
-                    except Exception as e:
-                        logging.error ('###### COULD NOT COPY BEZEL '+str(e))
+            thisfile = path+videoofile
+            thisdfile = destpath+videofile
+            if os.path.isfile(thisfile):
+                logging.debug ('###### GOING TO COPY VIDEO '+thisfile+' TO '+thisdfile)
+                try:
+                    logging.debug ('###### TRYING ')
+                    copyfile(thisfile,thisdfile)
+                except Exception as e:
+                    logging.error ('###### COULD NOT COPY VIDEO '+str(e))
+            thisfile = path+imageofile
+            thisdfile = destpath+imagefile
+            if os.path.isfile(thisfile):
+                logging.debug ('###### GOING TO COPY IMAGE '+thisfile+' TO '+thisdfile)
+                try:
+                    logging.debug ('###### TRYING')
+                    copyfile(thisfile,thisdfile)
+                except Exception as e:
+                    logging.error ('####### COULD NOT COPY IMAGE '+str(e))
+            thisfile = path+bezelfile
+            thisdfile = destpath+bezelfile
+            if os.path.isfile(thisfile):
+                logging.debug ('###### GOING TO COPY BEZEL CONFIG '+thisfile+' TO '+thisdfile)
+                try:
+                    logging.debug ('###### TRYING')
+                    copyfile(thisfile,thisdfile)
+                except Exception as e:
+                    logging.error ('###### COULD NOT COPY BEZEL '+str(e))
+            logging.error ('###### FINISHED COPYING '+str(file))
         else:
             logging.error ('###### FAILED TO COPY ROM '+origfile+' TO DESTINATION')
+            
+    logging.error ('###### FINISHED SYSTEM '+str(systemname))
+
     return foundSys
 
 
@@ -3071,6 +3078,7 @@ def insertEditorInLocalDb(edid,edname):
 	    edname = edname[:99]
         sqlst = 'INSERT INTO editors (id,text) values ('+str(edid)+',"'+edname+'")'
         executeSQL (sqlst)
+        mydb.commit()
 
 def insertGameNamesInDB(id,names):
     if not isinstance(names,list):
@@ -3090,14 +3098,26 @@ def insertGameNamesInDB(id,names):
             logging.debug ('###### THERE WAS AN ERROR GETTING NAMES')
             return
         result = executeSQL(sql)
-        logging.debug('###### GOT RESULT FROM SYNOPSIS CHECK '+str(result))
+        logging.debug('###### GOT RESULT FROM NAMES CHECK '+str(result))
         if result == None or result == []:
             sqlst = 'INSERT INTO gameNames (gameid,region,text) VALUES ('+str(id)+',"'+name['region']+'","'+name['text']+'")'
             executeSQL(sqlst)
 
 def insertSynopsisInDB(id,synopsis):
+    if not isinstance(synopsis,list):
+        new_syn = []
+        for key in synopsis:
+            my_syn = dict()    
+            my_syn['langue']=key.replace('synopsis_','')
+            my_syn['text']=synopsis[key]
+            new_syn.append(my_syn)
+        synopsis = new_syn
     for syn in synopsis:
-        sql = 'SELECT id FROM gameSynopsis where gameid='+str(id)+' and langue ="'+syn['langue']+'"'
+        try:
+            sql = 'SELECT id FROM gameSynopsis where gameid='+str(id)+' and langue ="'+syn['langue']+'"'
+        except Exception as e:
+            logging.error ('###### THERE IS AN ERROR IN THE SYNOPSIS ['+str(syn)+'] '+str(e))
+            sys.exit()
         result = executeSQL(sql)
         logging.debug('###### GOT RESULT FROM SYNOPSIS CHECK '+str(result))
         if result == None or result == []:
@@ -3129,8 +3149,39 @@ def insertGameRomsInDB(id,roms):
             logging.debug ('###### GOING TO EXECUTE SQL')
             executeSQL(sqlst)
 
+def mediaConvertor(media,mediaList):
+    for key in media.keys():
+        if isinstance(media[key],dict):
+            mediaList = mediaConvertor(media[key],mediaList)
+        else:
+            for key in media.keys():
+            ## HOW MANY _ : 1 no region, 2, region
+                if isinstance(media[key],dict):
+                    mediaList = mediaConvertor(media[key],mediaList)
+                else:
+                    my_media=dict()
+                    minfo = key.split('_')
+                    should = True
+                    for m in minfo:
+                        if m in ('sha1','crc','md5'):
+                            should = False
+                    if should:
+                        if len(minfo)>2:
+                            my_media['region']=minfo[2]
+                        else:
+                            my_media['region']='UNK'
+                        my_media['type']=minfo[1]
+                        my_media['url']=media[key]
+                        my_media['format']=my_media['url'][-3:]
+                        mediaList.append(my_media)
+                        logging.debug (str(my_media))
+    return mediaList
+
 def insertGameMediasInDB(id,medias):
     counter = 0
+    if not isinstance(medias,list):
+        new_medias = []
+        medias = mediaConvertor(medias,new_medias)
     for media in medias:
         try:
             mediaregion = media['region']
@@ -3138,11 +3189,11 @@ def insertGameMediasInDB(id,medias):
             mediaregion = 'UNK'
         try:
             sql = 'SELECT id FROM gameMedias where gameid='+str(id)+' and region ="'+mediaregion+'" and type = "'+media['type']+'" and format="'+media['format']+'"'
-        except:
-            logging.error ('###### COUL NOT CREATE MEDIA QUERY '+str(e))
+        except Exception as e:
+            logging.error ('###### COUL NOT CREATE MEDIA QUERY ['+str(medias)+']'+str(e))
             sys.exit()
         result = executeSQL(sql)
-        logging.debug('###### GOT RESULT FROM SYNOPSIS CHECK '+str(result))
+        logging.debug('###### GOT RESULT FROM MEDIAS CHECK '+str(result))
         if result == None or result == []:
             sqlst = 'INSERT INTO gameMedias (type,url,region,format,cnt,gameid) VALUES ('
             sqlst = sqlst + '"' +media['type']+ '",'
@@ -3150,7 +3201,7 @@ def insertGameMediasInDB(id,medias):
             sqlst = sqlst + '"' +mediaregion+ '",'
             sqlst = sqlst + '"' +media['format']+ '",'
             sqlst = sqlst + str(counter)+","
-            sqlst = sqlst + str(gameid)+")"
+            sqlst = sqlst + str(id)+")"
             executeSQL(sqlst)
             counter = counter + 1
 
@@ -3161,12 +3212,12 @@ def insertGameDatesInDB(id,dates):
     for rdate in dates:
         sql = 'SELECT id FROM gameDates where gameid='+str(id)+' and region ="'+rdate['region']+'"'
         result = executeSQL(sql)
-        logging.debug('###### GOT RESULT FROM SYNOPSIS CHECK '+str(result))
+        logging.debug('###### GOT RESULT FROM DATES CHECK '+str(result))
         if result == None or result == []:
             sqlst = 'INSERT INTO gameDates (text,region,gameid) VALUES ('
             sqlst = sqlst + '"' +rdate['text']+ '",'
             sqlst = sqlst + '"' +rdate['region']+ '",'
-            sqlst = sqlst + str(gameid)+")"
+            sqlst = sqlst + str(id)+")"
             executeSQL(sqlst)
 
 def insertGameInLocalDb(gameInfo):
@@ -3235,7 +3286,7 @@ def insertGameInLocalDb(gameInfo):
         medias = [{'type':'unk','url':'unk','region':'unk','format':'unk'}]
     insertGameMediasInDB(game['id'],medias)
     try:
-        dates = gameInfo['dates']
+        dates = gameInfo['dates ']
     except Exception as e:
         logging.error ('###### COULD NOT FIND DATES FOR THE GAME -'+str(e)+' - DEFAULTING')
         dates = [{'region':'unk','text':'0'}]
@@ -3306,7 +3357,7 @@ if migrateDB:
     currssid = 0
     gameid = int(startid)
     params =dict(fixParams)
-    numGames = 276000
+    numGames = 214000 #276000
     response = 'QUOTA'
     while gameid <= numGames:
         while response == 'QUOTA' or response == 'ERROR':
@@ -3333,6 +3384,9 @@ if migrateDB:
         if currssid == maxssid:
             currssid = 0
     ## Now all games have been imported into local DB
+    mydb.commit()
+    ### TODO REMOVE
+    logging.info ('###### ALL DONE ######')
     sys.exit(0)
 ## Default behaviour
 scrapeRoms(CURRSSID)

@@ -90,4 +90,5 @@ Try --startid (game_id of choice) to start download game information into the lo
 
 ## Sort Mode
 
-The --sort (directory) will sort all your roms to a destination directory, usefull if you want o have a precise list of roms sorted by their system (a directory per system).
+The --sort (directory) will sort all your roms to a destination directory, usefull if you want o have a precise list of roms sorted by their system (a directory per system) and create a es_config.xml with all the updated directories and system names.
+

@@ -1809,10 +1809,8 @@ def newLocateRom(romsha,rommd5,romcrc):
     try:
         mycursor.execute(sqlst, val)
         logging.debug('###### FOUND '+str(mycursor.rowcount)+' ROM Instances')
-        sys.exit()
     except Exception as e:
         logging.error ('###### CANNOT QUERY THE DB DUE TO ERROR - '+str(e))
-    sys.exit()
 
 def locateShainDB(mysha1='None',mymd5='None',mycrc='None',filename=''):
     result = ''
@@ -1878,7 +1876,6 @@ def locateShainDB(mysha1='None',mymd5='None',mycrc='None',filename=''):
                         myres = ast.literal_eval(result)
                     except Exception as e:
                         logging.error ('###### CANNOT CONVERT VIA AST '+str(e)+' RETURNING NOTHING')
-                        sys.exit()
                         return ''
                 logging.debug ('###### GOT A RESULT AND I\'M RETURNING IT')
                 return myres
@@ -1917,7 +1914,6 @@ def locateShainDB(mysha1='None',mymd5='None',mycrc='None',filename=''):
                 result = result.decode('ascii','replace')
         except Exception as e:
             logging.error ('####### ERROR DECODING RESULT STRING '+str(e))
-            sys.exit()
             return ''
         logging.debug ('###### WE DID FIND SOMETHING, MIGRATE TO NEW DB ')
         try:
@@ -1930,26 +1926,40 @@ def locateShainDB(mysha1='None',mymd5='None',mycrc='None',filename=''):
             myres = ast.literal_eval(result)
         except Exception as e:
             logging.debug ('###### CONVERTING VIA AST FAILED '+str(e))
-            sys.exit()
             return ''
+        logging.debug ('###### '+str(myres))
         logging.debug ('###### CREATING ROM OBJECT')
+        if 'jeu' not in myres:
+            nmyres = dict()
+            nmyres['jeu']=dict()
+            nmyres['jeu']['id']=myres['GameID']
+            nmyres['jeu']['roms']=[]
+            myres = nmyres
         try:
             myRom={'romfilename':filename,'romsha1':mysha1.upper(),'romcrc':mycrc.upper(),'rommd5':mymd5.upper(),'beta':'0','demo':'0','proto':'0','trad':'0','hack':'0','unl':'0','alt':'0','best':'0','netplay':'0'}
-            myRoms = [myRom]
         except Exception as e:
             logging.error ('###### COULD NOT CREATE ROM OBJECT '+str(e))
             return ''
         try:
+            myres['jeu']['roms'].append(myRom)
+        except Exception as e:
+            logging.error ('###### THIS GAME HAD NO ROMS ASSOCIATED - ADDING FIRST '+str(e)+' -- '+str(myres))
+            myres['jeu']['roms'].append(myRom)
+        try:
             logging.debug ('###### GETTING GAME ID')
             gameid = myres['jeu']['id']
             logging.debug ('###### GOT '+str(gameid))
-        except:
-            logging.error ('###### CANNOT GET GAME ID '+str(e))
+        except Exception as e:
+            logging.error ('###### CANNOT GET GAME ID '+str(e)+' AS PROPER JSON')
+            try:
+                gameid = myres['GameID']
+            except Exception as e:
+                logging.error ('###### CANNOT GET GAME ID '+str(e)+' NOT EVEN AS CACHED GAME')         
             return ''
-        logging.debug ('###### TRYING TO INSERT GAME IN NEW DB ')
+        logging.debug ('###### TRYING TO INSERT GAME IN NEW DB '+str(myres))
         insertGameInLocalDb (myres['jeu'])
-        logging.debug ('###### TRYING TO INSERT ROM IN NEW DB')
-        insertGameRomsInDB(gameid,myRoms)
+        ###logging.debug ('###### TRYING TO INSERT ROM IN NEW DB')
+        ###insertGameRomsInDB(gameid,myRoms)
         logging.debug ('###### COULD INSERT IT - COMMITING')
         mydb.commit()
         return result
@@ -2045,11 +2055,15 @@ def getGameInfo(CURRSSID, pathtofile, file, mymd5, mysha1, mycrc, sysid):
         ### USUALLY IN A VALID RESPONSE WE WOULD HAVE THE JEU KEY
         ### AND OF COURSE THE ANSWER WILL NOT BE EMPTY
         if not ('jeu' in response) and (response != ''):
+            if not isinstance(response,dict):
+                logging.debug ('###### RESPONSE IS A STRING - CONVERTING')
+                response = ast.literal_eval(response)
             #YES WE DID
             logging.info ('###### GAME INFO WAS NOT PRESENT FOR ROM')
             ### ONE OF THE FEATURES OF THE SCRAPER IS TO ALLOW YOU TO ASSIGN GAME ID'S TO RECORDS IN DB, WHICH WOULD
             ### BE SCRAPPED IN A SECOND RUN, THIS ALLOWS FOR ROMS THAT ARE NOT IN THE SITE BUT YOU KNOW OF TO BE SCRAPPED
             ### SO, DO WE HAVE A GAME ID?
+            logging.debug (str(response))
             if not 'GameID' in response:
                 ### NO WE DON'T SO WE ADD IT AS 0 SO YOU CAN REPLACE IT AFTERWARDS IN THE DB
                 response['GameID']='0'
@@ -2088,7 +2102,7 @@ def getGameInfo(CURRSSID, pathtofile, file, mymd5, mysha1, mycrc, sysid):
                         response = newresponse
                         ### AND UPDATE THE DB WITH THE NEW ANSWER
                         #logging.debug ('###### RESPONSE TO UPDATE '+str(response))
-                        updateDB (mysha1,response)
+                        ## updateDB (mysha1,response)
                         ### AND SINCE WE GOT A PROPER ANSWER (AND NEW) WE DO NOT HAVE TO UPDATE THE CALL
                         doupdate = False
                     else:
@@ -3085,7 +3099,7 @@ def insertGameNamesInDB(id,names):
         new_names=[]
         for key in names.keys():
             myname=dict()
-            myname['region']=key
+            myname['region']=key.replace('nom_','')
             myname['text']= names[key]
             new_names.append(myname)
         names = new_names
@@ -3117,7 +3131,6 @@ def insertSynopsisInDB(id,synopsis):
             sql = 'SELECT id FROM gameSynopsis where gameid='+str(id)+' and langue ="'+syn['langue']+'"'
         except Exception as e:
             logging.error ('###### THERE IS AN ERROR IN THE SYNOPSIS ['+str(syn)+'] '+str(e))
-            sys.exit()
         result = executeSQL(sql)
         logging.debug('###### GOT RESULT FROM SYNOPSIS CHECK '+str(result))
         if result == None or result == []:
@@ -3125,17 +3138,37 @@ def insertSynopsisInDB(id,synopsis):
             executeSQL(sqlst)
 
 def insertGameRomsInDB(id,roms):
-    logging.debug ('###### INSERTIMG ROMS IN DB')
+    logging.debug ('###### INSERTING ROMS IN DB '+str(roms))
+    ###### SCREENSCRAPER DOES NOT ALWAYS HAVE SHA,CRC AND MD%
+    ###### SO WE HAVE TP CHECK TO AVOID ERRORS
     for rom in roms:
-        sql = 'SELECT id FROM gameRoms where romsha1="'+rom['romsha1']+'"'
+        try:
+            romsha1 = rom['romsha1']
+        except:
+            romsha1 = 'None'
+        try:
+            romcrc = rom['romcrc']
+        except:
+            romcrc = 'None'
+        try:
+            rommd5 = rom['rommd5']
+        except:
+            rommd5 = 'None'
+        sql = 'SELECT id FROM gameRoms where romsha1="'+romsha1+'" or rommd5="'+rommd5+'" or romcrc="'+romcrc+'"'
         result = executeSQL(sql)
         logging.debug('###### GOT RESULT FROM ROM CHECK '+str(result))
         if result == None or result == []:
             sqlst = 'INSERT INTO gameRoms (romfilename,romsha1,romcrc,rommd5,beta,demo,proto,trad,hack,unl,alt,best,netplay,gameid) VALUES ('
             sqlst = sqlst + '"' +rom['romfilename']+ '",'
-            sqlst = sqlst + '"' +rom['romsha1']+ '",'
-            sqlst = sqlst + '"' +rom['romcrc']+ '",'
-            sqlst = sqlst + '"' +rom['rommd5']+ '",'
+            if romsha1 == 'None':
+                romsha1 = ''
+            if rommd5 == 'None':
+                rommd5 = ''
+            if romcrc == 'None':
+                romcrc = ''
+            sqlst = sqlst + '"' +romsha1+ '",'
+            sqlst = sqlst + '"' +romcrc+ '",'
+            sqlst = sqlst + '"' +rommd5+ '",'
             sqlst = sqlst + str(rom['beta'])+","
             sqlst = sqlst + str(rom['demo'])+","
             sqlst = sqlst + str(rom['proto'])+","
@@ -3167,7 +3200,7 @@ def mediaConvertor(media,mediaList):
                             should = False
                     if should:
                         if len(minfo)>2:
-                            my_media['region']=minfo[2]
+                            my_media['region']=minfo[2].replace('media_','')
                         else:
                             my_media['region']='UNK'
                         my_media['type']=minfo[1]
@@ -3191,7 +3224,6 @@ def insertGameMediasInDB(id,medias):
             sql = 'SELECT id FROM gameMedias where gameid='+str(id)+' and region ="'+mediaregion+'" and type = "'+media['type']+'" and format="'+media['format']+'"'
         except Exception as e:
             logging.error ('###### COUL NOT CREATE MEDIA QUERY ['+str(medias)+']'+str(e))
-            sys.exit()
         result = executeSQL(sql)
         logging.debug('###### GOT RESULT FROM MEDIAS CHECK '+str(result))
         if result == None or result == []:
@@ -3208,7 +3240,13 @@ def insertGameMediasInDB(id,medias):
 def insertGameDatesInDB(id,dates):
     if not isinstance(dates,list):
         logging.debug('###### DATES ARE NOT LIST '+str(dates))
-        sys.exit()
+        new_dates = []
+        for key in dates:
+            my_date = dict()    
+            my_date['region']=key.replace('date_','')
+            my_date['text']=dates[key]
+            new_dates.append(my_date)
+        dates = new_dates
     for rdate in dates:
         sql = 'SELECT id FROM gameDates where gameid='+str(id)+' and region ="'+rdate['region']+'"'
         result = executeSQL(sql)
@@ -3221,7 +3259,7 @@ def insertGameDatesInDB(id,dates):
             executeSQL(sqlst)
 
 def insertGameInLocalDb(gameInfo):
-    logging.debug ('###### GAMEINFO IS ')###+ str(gameInfo))
+    logging.debug ('###### GAMEINFO IS '+str(gameInfo))
     game = dict()
     try:
         game['id'] = gameInfo['id']
@@ -3279,6 +3317,7 @@ def insertGameInLocalDb(gameInfo):
         insertGameRomsInDB(game['id'],  gameInfo['roms'])
     except Exception as e:
         logging.error ('###### COULD NOT FIND ROMS FOR THE GAME - LEAVING EMPTY '+str(e))
+        sys.exit()
     try:
         medias = gameInfo['medias']
     except Exception as e:
@@ -3286,7 +3325,7 @@ def insertGameInLocalDb(gameInfo):
         medias = [{'type':'unk','url':'unk','region':'unk','format':'unk'}]
     insertGameMediasInDB(game['id'],medias)
     try:
-        dates = gameInfo['dates ']
+        dates = gameInfo['dates']
     except Exception as e:
         logging.error ('###### COULD NOT FIND DATES FOR THE GAME -'+str(e)+' - DEFAULTING')
         dates = [{'region':'unk','text':'0'}]

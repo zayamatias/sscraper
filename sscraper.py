@@ -78,7 +78,7 @@ UPDATEDATA = update
 try:
     logging.basicConfig(filename='sv2log.txt', filemode='a',
                         format='%(asctime)s - %(process)d - %(name)s - %(levelname)s - %(message)s',
-                        level=logging.ERROR)
+                        level=logging.DEBUG)
     logging.debug("Logging service started")
 except Exception as e:
     logging.debug('error al crear log '+str(e))
@@ -1828,8 +1828,8 @@ def locateShainDB(mysha1='None',mymd5='None',mycrc='None',filename=''):
             sleep(60)
     
     ###### TODO: DB HAS CHANGED, SO I NEED TO UPDATE THIS PART
-    sql = "SELECT  CONCAT ( '{\"jeu\":{\"id\":\"',mygameid,'\",\"noms\":[',names_result,'],\"synopsis\":[',synopsis_result,']\n\
-            ,\"medias\":[',media_result ,'],',system_result,',',editor_result,',',date_result,'}}') as json\n\
+    sql = "SELECT  CONCAT ( '{\"jeu\":{\"id\":\"',COALESCE(mygameid,''),'\",\"noms\":[',COALESCE(names_result,''),'],\"synopsis\":[',COALESCE(synopsis_result,''),']\n\
+            ,\"medias\":[',COALESCE(media_result,'') ,'],',COALESCE(system_result,'{}'),',',COALESCE(editor_result,'{}'),',',COALESCE(date_result,'{}'),'}}') as json\n\
             FROM (SELECT gr.gameid as mygameid,\n\
             GROUP_CONCAT(DISTINCT '{\"region\":\"',gn.region,'\",\"text\":\"',gn.`text`,'\"}') as names_result,\n\
             GROUP_CONCAT(DISTINCT '{\"region\":\"',gs.langue,'\",\"text\":\"',gs.`text`,'\"}') as synopsis_result,\n\
@@ -2049,7 +2049,7 @@ def getGameInfo(CURRSSID, pathtofile, file, mymd5, mysha1, mycrc, sysid):
             return file, response
         if response == 'ERROR':
             ### YES, SO RETURN TO SKIP THE FILE IF POSSIBLE
-            loggign.info ('###### QUOTA LIMIT DONE RETURNED BY API')
+            logging.info ('###### QUOTA LIMIT DONE RETURNED BY API')
             return file, response
         ### DID THE SCRAPER RETURN A VALID ROM?
         ### USUALLY IN A VALID RESPONSE WE WOULD HAVE THE JEU KEY
@@ -2352,11 +2352,10 @@ def copyRoms (systemid,systemname,path,CURRSSID,extensions,outdir):
                 except Exception as e:
                     logging.error ('###### COULD NOT COPY BEZEL '+str(e))
             logging.error ('###### FINISHED COPYING '+str(file))
+            mydb.commit()    
         else:
             logging.error ('###### FAILED TO COPY ROM '+origfile+' TO DESTINATION')
-            
     logging.error ('###### FINISHED SYSTEM '+str(systemname))
-
     return foundSys
 
 
@@ -3309,27 +3308,26 @@ def insertGameInLocalDb(gameInfo):
         logging.error ('###### COULD NOT FIND NAMES FOR THE GAME')
     try:
         synopsis = gameInfo['synopsis']
+        insertSynopsisInDB(game['id'],synopsis)
     except Exception as e:
         logging.error ('###### COULD NOT FIND SYNOPSIS FOR THE GAME -'+str(e)+' - DEFAULTING')
-        synopsis = [{'langue':'UNK','text':''}]
-    insertSynopsisInDB(game['id'],synopsis)
+        ###synopsis = [{'langue':'UNK','text':''}]
     try:
         insertGameRomsInDB(game['id'],  gameInfo['roms'])
     except Exception as e:
         logging.error ('###### COULD NOT FIND ROMS FOR THE GAME - LEAVING EMPTY '+str(e))
-        sys.exit()
     try:
         medias = gameInfo['medias']
+        insertGameMediasInDB(game['id'],medias)
     except Exception as e:
         logging.error ('###### COULD NOT FIND MEDIAS FOR THE GAME -'+str(e)+' - DEFAULTING')
-        medias = [{'type':'unk','url':'unk','region':'unk','format':'unk'}]
-    insertGameMediasInDB(game['id'],medias)
+        ##medias = [{'type':'unk','url':'unk','region':'unk','format':'unk'}]
     try:
         dates = gameInfo['dates']
+        insertGameDatesInDB(game['id'], dates)
     except Exception as e:
         logging.error ('###### COULD NOT FIND DATES FOR THE GAME -'+str(e)+' - DEFAULTING')
-        dates = [{'region':'unk','text':'0'}]
-    insertGameDatesInDB(game['id'], dates)
+        ##dates = [{'region':'unk','text':'0'}]
     return
 
 def sortRoms(mainDir):

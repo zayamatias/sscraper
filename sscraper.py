@@ -2394,6 +2394,15 @@ def fuzzyMatch (a,b):
 def gameNameMatches(orig,chkname):
     ## Convert non ascii codes to normal codes
     ##for chk in chkname['noms']:
+    ###### Remove parentehsis and first space
+    rmname = re.sub(r'\s\(.*\)','',chkname)
+    ckname = re.sub(r'\s\(.*\)','',orig)
+    if '.' in rmname:
+        rmname=rmname[:rmname.rindex('.')]
+    if rmname.upper() == ckname.upper():
+        logging.error ('///////'+rmname+'//////'+orig)
+        return True
+    
     chk = chkname
     logging.debug('##### '+str(chk))
     chk = chk.encode('ascii', 'ignore')

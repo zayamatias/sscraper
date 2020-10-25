@@ -12,15 +12,6 @@ CREATE TABLE 'filehashes' (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
 
 
-CREATE TABLE 'hashes' (
-  'hash' char(40) NOT NULL,
-  'response' longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
-  'created_at' timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
-  PRIMARY KEY ('hash')
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-
--- romhashes.apicache definition
-
 CREATE TABLE `apicache` (
   `apiname` varchar(100) NOT NULL,
   `parameters` varchar(255) NOT NULL,
@@ -81,14 +72,17 @@ CREATE TABLE `gameRoms` (
   `gameid` int(11) DEFAULT NULL,
   `romcrc` varchar(20) DEFAULT NULL,
   `rommd5` varchar(32) DEFAULT NULL,
+  `systemid` int(11) DEFAULT NULL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `gameRoms_UN` (`rommd5`,`romcrc`,`romsha1`),
   KEY `gameRoms_FK` (`gameid`),
   KEY `gameRoms_romsha1_IDX` (`romsha1`) USING BTREE,
   KEY `gameRoms_romcrc_IDX` (`romcrc`) USING BTREE,
   KEY `gameRoms_rommd5_IDX` (`rommd5`) USING BTREE,
-  CONSTRAINT `gameRoms_FK` FOREIGN KEY (`gameid`) REFERENCES `games` (`id`) ON DELETE CASCADE ON UPDATE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4;
+  KEY `gameRoms_FK_1` (`systemid`),
+  CONSTRAINT `gameRoms_FK` FOREIGN KEY (`gameid`) REFERENCES `games` (`id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT `gameRoms_FK_1` FOREIGN KEY (`systemid`) REFERENCES `systems` (`id`) ON DELETE SET NULL ON UPDATE CASCADE
+) ENGINE=InnoDB AUTO_INCREMENT=12173 DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE `gameDates` (
   `id` int(11) NOT NULL AUTO_INCREMENT,

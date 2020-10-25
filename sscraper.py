@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Your code goes below this line
-
+####
 from shutil import copyfile
 import csv
 import ast
@@ -78,7 +78,7 @@ UPDATEDATA = update
 try:
     logging.basicConfig(filename='sv2log.txt', filemode='a',
                         format='%(asctime)s - %(process)d - %(name)s - %(levelname)s - %(message)s',
-                        level=logging.DEBUG)
+                        level=logging.ERROR)
     logging.debug("Logging service started")
 except Exception as e:
     logging.debug('error al crear log '+str(e))
@@ -87,18 +87,23 @@ sysconfig = config.sysconfig
 
 tmpdir = config.tmpdir
 
-try:
-    mydb = mysql.connector.connect(
-    host=config.dbhost,
-    user=config.dbuser,
-    passwd=config.dbpasswd,
-    database=config.database
-    )
-except Exception as e:
-    logging.error ('###### CANNOT CONNECT TO DATABASE '+config.dbhost+'/'+config.database+' Error:'+str(e))
-    logging.error ('###### PLEASE MAKE SURE YOU HAVE A DATABASE SERVER THAT MATCHES YOUR CONFIGURATION')
-    print (str(e))
-    sys.exit()
+
+def initiateDBConnect():
+    try:
+        thisdb = mysql.connector.connect(
+        host=config.dbhost,
+        user=config.dbuser,
+        passwd=config.dbpasswd,
+        database=config.database
+        )
+        return thisdb
+    except Exception as e:
+        logging.error ('###### CANNOT CONNECT TO DATABASE '+config.dbhost+'/'+config.database+' Error:'+str(e))
+        logging.error ('###### PLEASE MAKE SURE YOU HAVE A DATABASE SERVER THAT MATCHES YOUR CONFIGURATION')
+        print (str(e))
+        sys.exit()
+
+mydb = initiateDBConnect()
 
 fixedURL = "https://www.screenscraper.fr/api"
 
@@ -212,6 +217,72 @@ class Game:
         else:
             return None
 
+def queryDB(sql,values,directCommit,thisDB):
+    ##logging.debug ('+++++++ '+sql)
+    mycursor = getDBCursor(thisDB)
+    if mycursor:
+        logging.debug('###### GOT A CURSOR FOR THE DB')
+        try:
+            if 'SELECT' in sql:
+                logging.debug('####### IS A SELECT QUERY')
+                try:
+                    mycursor.execute(sql, values)
+                    myresult = mycursor.fetchall()
+                    logging.debug ('@@@@@@@@@@ '+str(mycursor.statement))
+                except Exception as e:
+                    logging.debug ('###### COULD NOT EXECUTE SELECT QUERY '+str(e))
+                    logging.debug ('@@@@@@@@@@ '+str(mycursor.statement))
+                    return None,False
+                if mycursor.rowcount == 0:
+                    logging.debug ('###### COULD NOT FIND IN THE DB')
+                    return None,False
+                else:
+                    if mycursor.rowcount == 1:
+                        return myresult[0][0],True
+                    else:
+                        return myresult,True
+            else:
+                logging.debug('####### IT IS NOT A SELECT QUERY')
+                try:
+                    mycursor.execute(sql, values)
+                    logging.debug('####### QUERY EXECUTED PROPERLY')
+                    ##logging.debug ('@@@@@@@@@@ '+str(mycursor.statement))
+                except Exception as e:
+                    logging.error ('###### COULD NOT EXECUTE QUERY '+str(e))
+                    ###logging.error ('@@@@@@@@@@ '+str(mycursor.statement))
+                    return None,False
+                if directCommit and not migrateDB:
+                    thisDB.commit()
+                    logging.debug('####### AND I COMMITTED')
+            return None,True
+        except Exception as e:
+            logging.error ('###### COULD NOT EXECUTE QUERY '+str(e))    
+            return None,False
+    else:
+        logging.error ('###### COULD NOT CREATE CURSOR FOR DB')
+        return None,False
+
+
+def getDBCursor(theDB):
+    global mydb
+    connected = False
+    while not connected:
+        logging.debug ('###### TRYING TO CONNECT')
+        try:
+            thiscursor = theDB.cursor(buffered=True)
+            connected = True
+            logging.debug ('###### CONNECTED SUCCESFULLY')
+        except Exception as e:
+            logging.error ('###### CANNOT CONNECT TO DB - '+str(e))
+            logging.error ('###### WAITING AND RETRYING')
+            try:
+                mydb.close()
+                sleep(60)
+                mydb = initiateDBConnect()
+            except Exception as e:
+                logging.error ('###### CANNOT RECONNECT TO DB '+str(e))
+    return thiscursor
+
 def getGameName(jsondata,path):
     if 'noms' in jsondata['jeu']:
         name = None
@@ -254,85 +325,45 @@ def getGameName(jsondata,path):
     return name
 
 def updateInDBV2Call(api,params,response):
+    global mydb
     logging.debug ('###### INSIDE INSERT INTO DB FOR V2 CALL '+str(params))
     ### Update the DB with the call to V2
     if response == 'ERROR' or response =='QUOTA':
         ### Gameid=1 is added to the non caching criteria to avoid being there when quota is over and checking 
         logging.error ('###### GOT AN ERROR FROM API CALL SO NOT UPDATING V2 DB '+response)
-        return True
+        return False
     result = ''
     logging.debug ('###### CONNECTING TO DB TO UPDATE CACHED RESULT FOR V2 CALL')
-    connected = False
-    while not connected:
-        logging.debug ('###### TRYING TO CONNECT')
-        try:
-            mycursor = mydb.cursor(buffered=True)
-            connected = True
-            logging.debug ('###### CONNECTED SUCCESFULLY')
-        except Exception as e:
-            logging.error ('###### CANNOT CONNECT TO DB - '+str(e))
-            logging.error ('###### WAITING AND RETRYING')
-            sleep(60)
     sql = "INSERT INTO apicache (apiname,parameters,result) VALUES (%s,%s,%s)"
     val = (api,params,response)
-    connected = False
     logging.debug ('###### TRYING TO INSERT INTO DB API V2 CACHE')
-    try:
-        mycursor.execute(sql, val)
-        #logging.debug ('@@@@@@@@@@ '+str(mycursor.statement))
-        if mycursor.rowcount == 0:
-            logging.debug ('###### COULD NOT INSERT IN THE DB')
-            return False
+    response, success = queryDB(sql,values,True,mydb)
+    if success:
+        if response['jeu']:
+            insertGameInLocalDb(response['jeu'])
         else:
-            logging.debug ('###### INSERTED SUCCESFULLY IN DB')
-            mydb.commit()
-            ### I managed to update the DB with a V2 call, if this is a new game, I might as well update the new DB
-            try:
-                if response['jeu']:
-                    insertGameInLocalDb(response['jeu'])
-            except:
-                logging.info ('###### THERE IS NO GAME IN THE RESPONSE')
-            return True
-    except Exception as e:
-        logging.error ('###### CANNOT QUERY THE DB DUE TO ERROR - '+str(mycursor.statement)+' - '+str(e))
-        return True
-    return True
+            logging.info ('###### THERE IS NO GAME IN THE RESPONSE ')
+            return False
+    else:
+        logging.error ('###### COULD NOT INSERT INTO DB V2 API CACHE')
+        return False
 
 def searchInDBV2Call(api,params):
+    global mydb
     ### Try to see if it is in cache
     result = ''
     logging.debug ('###### CONNECTING TO DB TO LOCATE CACHED RESULT FOR V2 CALL')
-    connected = False
-    while not connected:
-        logging.debug ('###### TRYING TO CONNECT')
-        try:
-            mycursor = mydb.cursor(buffered=True)
-            connected = True
-            logging.debug ('###### CONNECTED SUCCESFULLY')
-        except Exception as e:
-            logging.error ('###### CANNOT CONNECT TO DB - '+str(e))
-            logging.error ('###### WAITING AND RETRYING')
-            sleep(60)
     sql = "SELECT result FROM apicache WHERE apiname = %s AND parameters = %s"
     val = (api,params )
-    connected = False
     logging.debug ('###### TRYING TO QUERY DB API V2 CACHE')
-    try:
-        mycursor.execute(sql, val)
-        logging.debug ('@@@@@@@@@@ '+str(mycursor.statement))
-        if mycursor.rowcount == 0:
-            logging.debug ('###### NO CACHED CALL FOUND IN THE DB')
-            return None
-        else:
-            result = mycursor.fetchall()
-            result = result[0][0]
-            logging.debug ('###### FOUND CACHED CALL IN DB')
-            return parsePossibleErrors(result)
-    except Exception as e:
-        logging.error ('###### CANNOT QUERY THE DB DUE TO ERROR - '+str(mycursor.statement)+' - '+str(e))
+    result, success = queryDB(sql,val,False,mydb)
+    if result == None:
+        logging.debug ('###### NO CACHED CALL FOUND IN THE DB')
         return None
-    return None
-
+    else:
+        logging.debug ('###### FOUND CACHED CALL IN DB')
+        return parsePossibleErrors(result)
+ 
 def parsePossibleErrors(response):
     ## GENERIC ERROR PARSE FOR API CALLS, RETURNS A SHORT ERROR OR SAME RESPONSE DEPENDING
     ## ON CONTENTS
@@ -1210,7 +1241,7 @@ def getAllSystems(CURRSSID):
     API = "systemesListe"
     response = callAPI(fixedURL, API, fixParams, CURRSSID,'2','Get All Systems')
     ### IF WE GET A RESPONSE THEN RETURN THE LIST
-    if response != 'ERROR':
+    if response != 'ERROR' and response is not None:
         try:
             return response['systemes']
         except Exception as e:
@@ -1225,114 +1256,59 @@ def deleteHashCache(file):
     val = (file, )
     connected = False
     logging.debug ('###### TRYING TO DELETE INFO IN HASH DB FOR '+file)
-    mycursor = mydb.cursor(buffered=True)
-    try:
-        mycursor.execute(sql, val)
-        if mycursor.rowcount == 0:
-            logging.debug ('###### NOT FOUND IN THE DB')
-            return ''
-        else:
-            logging.debug('###### RECORDS DELETED')
-    except Exception as e:
-            logging.error ('###### ERROR DELETING RECORDS FOR '+file+' FROM DB :'+str(e))
-    return ''
-
+    result,success = queryDB(sql,val,True,mydb)
+    if not success:
+        logging.error ('###### ERROR DELETING RECORDS FOR '+file+' FROM DB :'+str(e))
+    else:
+        logging.debug('###### RECORDS DELETED')
+    return success
 
 def getAllGamesinDB():
-    result = ''
     logging.debug ('###### CONNECTING TO DB TO GET ALL FILE HASHES ')
-    connected = False
-    while not connected:
-        logging.debug ('###### TRYING TO CONNECT')
-        try:
-            mycursor = mydb.cursor(buffered=True)
-            connected = True
-            logging.debug ('###### CONNECTED SUCCESFULLY')
-        except Exception as e:
-            logging.error ('###### CANNOT CONNECT TO DB - '+str(e))
-            logging.error ('###### WAITING AND RETRYING')
-            sleep(60)
     sql = "SELECT file,SHA1,CRC,MD5 FROM filehashes"
     val = ()
-    connected = False
     logging.debug ('###### TRYING TO QUERY DB FOR ALL FILE HASHES')
-    try:
-        mycursor.execute(sql, val)
-        logging.debug ('@@@@@@@@@@ '+str(mycursor.statement))
-        if mycursor.rowcount == 0:
-            logging.debug ('###### FILEHASHES TABLE SEEMS TO BE EMPTY')
-            return ''
-        else:
-            results = mycursor.fetchall()
-            logging.error ('###### FOUND '+str(len(results))+' RESULTS FOR FILE HASHES')
-            return results
-    except Exception as e:
-        logging.error ('###### CANNOT QUERY THE DB DUE TO ERROR - '+str(e))
-        return ''
-    return ''
-
+    result,success = queryDB(sql,val,False,mydb)
+    if success:
+        logging.debug ('###### COULD GET ALL CACHES')
+    else:
+        logging.debug ('###### COULD NOT GET ALL CACHES')
+    return result
 
 def lookupHashInDB(file,hashType):
-    result = ''
     logging.debug ('###### CONNECTING TO DB TO LOCATE HASH '+hashType+' FOR '+file)
-    connected = False
-    while not connected:
-        logging.debug ('###### TRYING TO CONNECT')
-        try:
-            mycursor = mydb.cursor(buffered=True)
-            connected = True
-            logging.debug ('###### CONNECTED SUCCESFULLY')
-        except Exception as e:
-            logging.error ('###### CANNOT CONNECT TO DB - '+str(e))
-            logging.error ('###### WAITING AND RETRYING')
-            sleep(60)
     sql = "SELECT "+hashType.upper()+" FROM filehashes WHERE file = %s"
     val = (file, )
-    connected = False
     logging.debug ('###### TRYING TO QUERY DB FOR '+hashType)
-    try:
-        mycursor.execute(sql, val)
-        logging.debug ('@@@@@@@@@@ '+str(mycursor.statement))
-        if mycursor.rowcount == 0:
-            logging.debug ('###### NO '+hashType+' FOUND IN THE DB')
-            return ''
-        else:
-            result = mycursor.fetchall()
-            result = result[0][0]
-            logging.debug ('###### FOUND '+hashType+' MATCH IN DB')
-            return result
-    except Exception as e:
-        logging.error ('###### CANNOT QUERY THE DB DUE TO ERROR - '+str(e))
-        return ''
-    return ''
+    result,success = queryDB(sql,val,False,mydb)
+    if success:
+        logging.debug('###### FOUND IN DB')
+    else:
+        logging.debug('###### NOT FOUND IN DB')
+    return result
 
 def updateHashInDB(file,hashType,hash):
     logging.debug ('###### UPDATING '+hashType+' '+hash+' FOR FILE '+file)
-    mycursor = mydb.cursor(buffered=True)
     sql = "UPDATE filehashes SET "+hashType.upper()+"= %s WHERE file = %s"
     val =(str(hash),str(file))
-    try:
-        mycursor.execute(sql, val)
-        mydb.commit()
-        logging.debug ('###### UPDATED '+hashType+' '+hash+' FOR FILE '+file)
-    except Exception as e:
-        logging.error ('###### COULD NOT UPDATE DATA IN DB ' +str(e))
-    return
+    result,success = queryDB(sql,val,True,mydb)
+    if success:
+        logging.debug ('###### HASH UPDATED ')
+    else:
+        logging.debug ('###### COULD NOT UPDATE HASH')
+    return success
 
 def insertHashInDB(file,hashType,hash):
     logging.debug ('###### INSERTING '+hashType+' '+hash+' FOR FILE '+file)
-    mycursor = mydb.cursor(buffered=True)
     sql = "INSERT INTO filehashes (file, "+hashType.upper()+") VALUES (%s, %s)"
     val =(str(file),str(hash))
-    try:
-        mycursor.execute(sql, val)
-        mydb.commit()
-        logging.debug('###### INSERTED '+hashType.upper()+' '+str(hash)+' FOR FILE '+file)
-    except Exception as e:
-        logging.error ('###### COULD NOT INSTERT DATA IN DB ' +str(e))
-        logging.debug('###### UPDATED LOCAL CACHE')
-        updateHashInDB(file,hashType,hash)
-    return
+    result,success = queryDB(sql,val,True,mydb)
+    if success:
+        logging.debug ('###### HASH INSERTED ')
+    else:
+        logging.debug ('###### COULD NOT INSERT HASH')
+        success = updateHashInDB(file,hashType,hash)
+    return success
 
 
 def md5(fname):
@@ -1666,6 +1642,7 @@ def getRomFiles(path,acceptedExtens):
         for file in filelist:
             extens = file[file.rindex('.'):]
             if extens not in acceptedExtens:
+                logging.error ('###### REMOVED '+file+' FROM COPY LIST')
                 filelist.remove(file)
         ### GET THE LIST OF FILES THAT COMPLY WITH THE ACCEPTED EXTENSIONS (PLUS ZIP, REMEMBER)
         logging.info ('###### FOUND '+str(len(filelist))+' FILES WITH EXTENSIONS '+str(acceptedExtens))
@@ -1763,73 +1740,48 @@ def grabData(system, path, CURRSSID, acceptedExtens):
     cleanMedia (destpath,'*.png')
     logging.debug ('###### DONE')
 
-def deleteFromDB(sha1):
-    logging.debug ('###### DELETING RECORD FORM DB')
-    connected = False
-    while not connected:
-        try:
-            mycursor = mydb.cursor(buffered=True)
-            connected = True
-        except Exception as e:
-            logging.error ('###### CANNOT CONNECT TO DB - '+str(e))
-            logging.error ('###### WAITING AND RETRYING')
-            sleep(60)
-    sql = "DELETE FROM hashes WHERE hash = %s"
-    val = (sha1.lower(), )
-    try:
-        mycursor.execute(sql, val)
-        result = mycursor.fetchall()
-        connected = True
-    except Exception as e:
-        logging.error ('###### RECORD DOES NOT EXIST - '+str(e))
-        result = None
+def findMissingGame(gameName,systemid):
+    logging.debug('###### WILL TRY TO FIND GAMES '+gameName+' FOR SYSTEM '+str(systemid))
+    sql = "SELECT games.id AS GameID, games.system AS SystemID, gn.text AS gameName , gr.romfilename AS Rom\n\
+           FROM gameNames gn\n\
+           LEFT JOIN games ON games.id=gn.gameid\n\
+           LEFT JOIN gameRoms gr ON gr.gameid=gn.gameid\n\
+           WHERE gn.gameid IN (SELECT DISTINCT gr.gameid FROM gameRoms gr WHERE romfilename LIKE %s or gn.text LIKE %s)\n\
+           AND games.system=%s"
+    qName =gameName[0]+'%'
+    val = (qName,qName,systemid)
+    srchName = gameName[:gameName.rindex('.')]
+    logging.debug('###### ['+gameName+'] ---  ['+srchName+']')
+    results,success = queryDB(sql,val,False,mydb)
+    gameId = 0
+    if results:
+        logging.debug('###### THERE ARE RESULTS, WILL TRY TO MATCH WITH '+srchName)
+        if isinstance(results,list):            
+            logging.debug ('###### I FOUND SEVERAL CANDIDATES')
+            for result in results:
+                logging.debug ('###### COMPARING WITH '+result[2]+' AND '+result[3])
+                if gameNameMatches(srchName,result[2]) or gameNameMatches(srchName,result[3]):
+                    logging.debug('###### THERE IS A MATCH!!!')
+                    gameId = result[0]
+                    break
+                else:
+                    logging.debug ('###### NO LUCK THIS TIME')
+        else:
+            logging.debug ('###### I FOUND ONE CANDIDATE')
+            logging.debug('###### '+str(results))
+            if srchName == results[2] or srchName==results[3]:
+                gameId = results[0]
+                logging.debug ('####### FOUND IT!! '+str(results))
+    else:
+        logging.debug ('####### COULD NOT FIND '+gameName+' FOR SYSTEM '+str(systemid))
+    return gameId
 
-    if not result:
-        logging.debug ('##### COULD NOT FIND SHA1 in DB')
-        return ''
-    return ''
-
-
-def newLocateRom(romsha,rommd5,romcrc):
-    ### TODO Objective si to grab the infromation from the gameRoms table and then capture the 
-    ### gameID and then get all the info reconsturcted as if it was a call to screenscraper
-    ### returning a response in JSON as screenscraper would do
-    sqlst = "select * from gameRoms gr where romsha1=%s or rommd5=%s romcrc =%s"
-    val = (romsha,rommd5,romcrc)
-    connected = False
-    while not connected:
-        try:
-            mycursor = mydb.cursor(buffered=True)
-            connected = True
-            logging.debug ('###### CONNECTED SUCCESFULLY')
-        except Exception as e:
-            logging.error ('###### CANNOT CONNECT TO DB - '+str(e))
-            logging.error ('###### WAITING AND RETRYING')
-            sleep(60)
-    try:
-        mycursor.execute(sqlst, val)
-        logging.debug('###### FOUND '+str(mycursor.rowcount)+' ROM Instances')
-    except Exception as e:
-        logging.error ('###### CANNOT QUERY THE DB DUE TO ERROR - '+str(e))
-
-def locateShainDB(mysha1='None',mymd5='None',mycrc='None',filename=''):
+def locateShainDB(mysha1='None',mymd5='None',mycrc='None',filename='',sysid=0):
     result = ''
     logging.debug ('###### CONNECTING TO DB TO LOCATE DATA FOR '+mysha1)
-    connected = False
-    while not connected:
-        logging.debug ('###### TRYING TO CONNECT')
-        try:
-            mycursor = mydb.cursor(buffered=True)
-            connected = True
-            logging.debug ('###### CONNECTED SUCCESFULLY')
-        except Exception as e:
-            logging.error ('###### CANNOT CONNECT TO DB - '+str(e))
-            logging.error ('###### WAITING AND RETRYING')
-            sleep(60)
-    
     ###### TODO: DB HAS CHANGED, SO I NEED TO UPDATE THIS PART
-    sql = "SELECT  CONCAT ( '{\"jeu\":{\"id\":\"',COALESCE(mygameid,''),'\",\"noms\":[',COALESCE(names_result,''),'],\"synopsis\":[',COALESCE(synopsis_result,''),']\n\
-            ,\"medias\":[',COALESCE(media_result,'') ,'],',COALESCE(system_result,'{}'),',',COALESCE(editor_result,'{}'),',',COALESCE(date_result,'{}'),'}}') as json\n\
+    sql = "SELECT  CONCAT ( '{\"jeu\":{\"id\":\"',mygameid,'\",\"noms\":[',COALESCE(names_result,''),'],\"synopsis\":[',COALESCE(synopsis_result,''),']\n\
+            ,\"medias\":[',COALESCE(media_result,'') ,'],',COALESCE(system_result,'\"systeme\":{}'),',',COALESCE(editor_result,'\"editeur\":{}'),',',COALESCE(date_result,'\"dates\":{}'),'}}') as json\n\
             FROM (SELECT gr.gameid as mygameid,\n\
             GROUP_CONCAT(DISTINCT '{\"region\":\"',gn.region,'\",\"text\":\"',gn.`text`,'\"}') as names_result,\n\
             GROUP_CONCAT(DISTINCT '{\"region\":\"',gs.langue,'\",\"text\":\"',gs.`text`,'\"}') as synopsis_result,\n\
@@ -1846,172 +1798,88 @@ def locateShainDB(mysha1='None',mymd5='None',mycrc='None',filename=''):
             LEFT JOIN editors ed on ed.id = g2.editeur\n\
             LEFT JOIN gameDates gd on gd.gameid = gr.gameid where gr.romsha1 = %s or gr.rommd5 = %s or gr.romcrc =%s) as gameinfo"
     val = (mysha1,mymd5,mycrc)
-    connected = False
-    logging.debug ('###### TRYING TO QUERY DB TO SEARCH HASHES ')
-    try:
-        mycursor.execute(sql, val)
-    except Exception as e:
-        logging.error ('###### CANNOT QUERY DB '+str(e))
-        logging.debug ('@@@@@@@@@@ '+str(mycursor.statement))
-    ### PROBABLY ERROR HERE, TO TEST      
-    if mycursor.rowcount != 0:
-        if mycursor.rowcount == 1:
-            logging.debug ('###### I\'VE FOUND WHAT YOU\'RE LOOKING FOR IN THE V2 DB')
-            result = mycursor.fetchall()[0][0]
-            if result != None:
-                ###### NEED TO REPLACE EOL CHARACRTES WITH DOUBLE BACKSLASH ESCAPED EQUIVALENT FOR DICT CONVERSION TO WORK
-                result = result.replace('\x0d\x0a','\\r\\n').replace('\x0a','').replace('\x09','').replace('\x0b','').replace('  ','').replace('\r','')
-                logging.debug ('###### WE DID FIND SOMETHING '+repr(result))
-                try:
-                    logging.debug ('##### ENCODING RESULT')
-                    result = result.encode('utf-8','replace')
-                except Exception as e:
-                    logging.error ('###### CANNOT ENCODE '+str(e))
-                try:
-                    logging.debug ('###### CONVERTING VIA JSON')
-                    myres = json.loads(result)
-                except Exception as e:
-                    logging.debug ('###### CONVERTING VIA AST '+str(e))
-                    try:
-                        myres = ast.literal_eval(result)
-                    except Exception as e:
-                        logging.error ('###### CANNOT CONVERT VIA AST '+str(e)+' RETURNING NOTHING')
-                        return ''
-                logging.debug ('###### GOT A RESULT AND I\'M RETURNING IT')
-                return myres
-            else:
-                logging.debug ('###### WE DID NOT FIND ANYTHING IN THE NEW DB')
-        else:
-            logging.error ('###### I\'VE FOUND MORE THAN A SINGLE RESULT, THIS SHOULD NOT BE HAPPENING')
-            logging.error ('###### THIS IS THE QUERY ')
-            logging.error ('@@@@@@@@@@ '+str(mycursor.statement))
-            return 'ERROR'
-    logging.debug ('###### NO DATA FOUND IN V2 DB GOING TO GO TO OLD DB ')
-    ### I'M GOING TO CALL THE OLD DATABASE JUST IN CASE SO I CAN MIGRATE THIS ROM TO THE NEW DB
-    ### THIS WILL HAVE TO BE EVENTUALLY REMOVED WHEN EVERYTHING IS MIGRATED TO V2
-    sql = 'SELECT response FROM hashes WHERE hash=%s'
-    val=(mysha1.lower(),)
-    try:
-        mycursor.execute(sql, val)
-        logging.debug ('@@@@@@@@@@ '+str(mycursor.statement))
-    except Exception as e:
-        logging.error ('###### ERROR LOOKING IN OLD DB '+str(e))
-        return ''
-    if mycursor.rowcount == 0:
-        logging.debug ('###### NOTHING WAS FOUND IN THE OLD DB')
-        return ''
-    else:
-        result = None
-        result = mycursor.fetchall()
-        result = result[0][0]
-        if result == None:
-            logging ('###### ACTUALLY NOTHING HAS BEEN FOUND, SO SKIPPING UPDATE')
-            return ''
+    result,success = queryDB(sql,val,False,mydb)
+    if result is not None:
+        logging.debug ('###### RECORD FOUND IN DB')
+        logging.debug ('###### I\'VE FOUND WHAT YOU\'RE LOOKING FOR IN THE V2 DB')
+        ###### NEED TO vREPLACE EOL CHARACRTES WITH DOUBLE BACKSLASH ESCAPED EQUIVALENT FOR DICT CONVERSION TO WORK
+        result = result.replace('\x0d\x0a','\\r\\n').replace('\x0a','').replace('\x09','').replace('\x0b','').replace('  ','').replace('\r','')
+        logging.debug ('###### WE DID FIND SOMETHING '+repr(result))
         try:
-            if isinstance(result,str):
-                result = result.encode('utf-8').decode('ascii','replace')
-            else:
-                result = result.decode('ascii','replace')
+            logging.debug ('##### ENCODING RESULT')
+            result = result.encode('utf-8','replace')
         except Exception as e:
-            logging.error ('####### ERROR DECODING RESULT STRING '+str(e))
-            return ''
-        logging.debug ('###### WE DID FIND SOMETHING, MIGRATE TO NEW DB ')
+            logging.error ('###### CANNOT ENCODE '+str(e))
         try:
             logging.debug ('###### CONVERTING VIA JSON')
             myres = json.loads(result)
         except Exception as e:
-            logging.debug ('###### CONVERTING VIA JSON FAILED '+str(e))
-            logging.debug ('###### CONVERTING VIA AST')
-        try:
-            myres = ast.literal_eval(result)
-        except Exception as e:
-            logging.debug ('###### CONVERTING VIA AST FAILED '+str(e))
-            return ''
-        logging.debug ('###### '+str(myres))
-        logging.debug ('###### CREATING ROM OBJECT')
-        if 'jeu' not in myres:
-            nmyres = dict()
-            nmyres['jeu']=dict()
-            nmyres['jeu']['id']=myres['GameID']
-            nmyres['jeu']['roms']=[]
-            myres = nmyres
-        try:
-            myRom={'romfilename':filename,'romsha1':mysha1.upper(),'romcrc':mycrc.upper(),'rommd5':mymd5.upper(),'beta':'0','demo':'0','proto':'0','trad':'0','hack':'0','unl':'0','alt':'0','best':'0','netplay':'0'}
-        except Exception as e:
-            logging.error ('###### COULD NOT CREATE ROM OBJECT '+str(e))
-            return ''
-        try:
-            myres['jeu']['roms'].append(myRom)
-        except Exception as e:
-            logging.error ('###### THIS GAME HAD NO ROMS ASSOCIATED - ADDING FIRST '+str(e)+' -- '+str(myres))
-            myres['jeu']['roms'].append(myRom)
-        try:
-            logging.debug ('###### GETTING GAME ID')
-            gameid = myres['jeu']['id']
-            logging.debug ('###### GOT '+str(gameid))
-        except Exception as e:
-            logging.error ('###### CANNOT GET GAME ID '+str(e)+' AS PROPER JSON')
+            logging.debug ('###### CONVERTING VIA AST '+str(e))
             try:
-                gameid = myres['GameID']
+                myres = ast.literal_eval(result)
             except Exception as e:
-                logging.error ('###### CANNOT GET GAME ID '+str(e)+' NOT EVEN AS CACHED GAME')         
-            return ''
-        logging.debug ('###### TRYING TO INSERT GAME IN NEW DB '+str(myres))
-        insertGameInLocalDb (myres['jeu'])
-        ###logging.debug ('###### TRYING TO INSERT ROM IN NEW DB')
-        ###insertGameRomsInDB(gameid,myRoms)
-        logging.debug ('###### COULD INSERT IT - COMMITING')
-        mydb.commit()
-        return result
-    
+                logging.error ('###### CANNOT CONVERT VIA AST '+str(e)+' RETURNING NOTHING '+str(result))
+                sys.exit()
+                return ''
+        logging.debug ('###### GOT A RESULT AND I\'M RETURNING IT')
+        return myres
+    else:
+        ######## THIS NEEDS TO BE CHANGED BY LOCATEGAMEIN ROMNAMES
+        gameID = findMissingGame(filename,sysid)
+        logging.debug ('###### GAMEID RETURNED IS '+str(gameID))
+        if gameID is not None:
+            try:
+                myRom = {'romfilename':filename,'romsha1':mysha1.upper(),'romcrc':mycrc.upper(),'rommd5':mymd5.upper(),'beta':'0','demo':'0','proto':'0','trad':'0','hack':'0','unl':'0','alt':'0','best':'0','netplay':'0'}
+                myRoms = [myRom]
+            except Exception as e:
+                logging.error ('###### ERROR CREATING ROM OBJECT '+str(e))
+            logging.debug ('###### MY ROM IS  '+str(myRom))
+            insertGameRomsInDB(gameID,myRoms,sysid)
+            if gameID !=0:
+                return locateShainDB(mysha1,mymd5,mycrc,filename,sysid)
+            else:
+                return None
+        else:
+            logging.debug ('###### COULD NOT GET ROM INFORMATION')
+            return None
+
 def updateDB(mysha1,response):
     logging.debug ('###### CALLED UPDATE DB WITH RESPONSE '+str(response))
     if response == 'ERROR':
         logging.debug ('###### GOT AN ERROR FROM API CALL SO I\'M NOT UPDATING THE DB HASH')
-        return 
+        return False 
     if not 'urlopen error' in response:
-        mycursor = mydb.cursor(buffered=True)
         sql = "REPLACE INTO hashes (hash, response) VALUES (%s, %s)"
         val =[(str(mysha1),str(response))]
-        try:
-            result = mycursor.executemany(sql, val)
-            mydb.commit()
-            logging.info ('###### DB UPDATED OK ['+str(result)+']')
-        except Exception as e:
-            logging.error ('###### COULD NOT INSTERT DATA IN DB ' +str(e))
-            logging.debug('###### UPDATED LOCAL CACHE')
-        return
+        result,success = queryDB(sql,val,True,mydb)
+        if success:
+            logging.debug ('###### COULD UPDATE DB')
+        else:
+            logging.debug ('###### COULD NOT UPDATE DB')
+        return success
     else:
-        return
+        logging.debug ('###### THERE WAS A PROBLEM WITH RESPONSE FROM API')
+        return false
 
 def deleteHashFromDB(filename):
-    mycursor = mydb.cursor(buffered=True)
     sql = 'DELETE FROM filehashes WHERE file = "%s"'
     val =(str(filename))
-    try:
-        result = mycursor.execute(sql, val)
-        mydb.commit()
-        logging.debug ('@@@@@@@@@@ '+str(mycursor.statement))
-        logging.info ('###### DB UPDATED OK ['+str(result)+']')
-    except Exception as e:
-        logging.error ('###### COULD NOT DELETE FROM DB ' +str(e))
-        return 1
-    return 0
-
+    result,success = queryDB(sql,val,True,mydb)
+    if success:
+        logging.debug ('###### COULD DELETE FROM DB')
+    else:
+        logging.debug ('###### COULD NOT DELETE FROM DB')
+    return success
 
 def updateDBFile(origfile,destfile):
-    mycursor = mydb.cursor(buffered=True)
     sql = 'UPDATE filehashes SET file = %s WHERE file = %s'
     val =(str(destfile),str(origfile))
-    try:
-        result = mycursor.execute(sql, val)
-        mydb.commit()
-        logging.debug ('@@@@@@@@@@ '+str(mycursor.statement))
-        logging.info ('###### DB UPDATED OK ['+str(result)+']')
-    except Exception as e:
-        logging.error ('###### COULD NOT INSTERT DATA IN DB ' +str(e))
-        return 1
-    return 0
+    result,success = queryDB(sql,val,True,mydb)
+    if success:
+        logging.debug ('###### COULD UPDATE FILE IN DB')
+    else:
+        logging.debug ('###### COULD NOT UPDATE FILE IN DB')
+    return success
 
 def getGameInfo(CURRSSID, pathtofile, file, mymd5, mysha1, mycrc, sysid):
     ### THIS IS WHERE EVERYTHING HAPPENS
@@ -2034,7 +1902,7 @@ def getGameInfo(CURRSSID, pathtofile, file, mymd5, mysha1, mycrc, sysid):
     ### INITIQLIZE VARIABLES TO AVOID ACRRY ON VALUES
     response = None
     ### FIRST, TRY TO GET THE ANSWER FRO THE DB, THIS IS DONE SO WE DO NOT CALL THE SCRAPER EVRYTIME IF WE HAVE ALREADY FETCHED INFORMATION FOR THIS PARTICULAR SHA
-    response = locateShainDB(mysha1,mymd5,mycrc,file)
+    response = locateShainDB(mysha1,mymd5,mycrc,file,sysid)
     ###logging.info ('######## '+str(response))
     ### DID WE SOMEHOW GOT AN EMPTY RESPONSE?
     if response !='':
@@ -2045,7 +1913,7 @@ def getGameInfo(CURRSSID, pathtofile, file, mymd5, mysha1, mycrc, sysid):
         ### DID WE GET A QUOTA LIMIT?
         if response == 'QUOTA':
             ### YES, SO RETURN TO SKIP THE FILE IF POSSIBLE
-            loggign.info ('###### QUOTA LIMIT DONE RETURNED BY API')
+            logging.info ('###### QUOTA LIMIT DONE RETURNED BY API')
             return file, response
         if response == 'ERROR':
             ### YES, SO RETURN TO SKIP THE FILE IF POSSIBLE
@@ -2054,7 +1922,8 @@ def getGameInfo(CURRSSID, pathtofile, file, mymd5, mysha1, mycrc, sysid):
         ### DID THE SCRAPER RETURN A VALID ROM?
         ### USUALLY IN A VALID RESPONSE WE WOULD HAVE THE JEU KEY
         ### AND OF COURSE THE ANSWER WILL NOT BE EMPTY
-        if not ('jeu' in response) and (response != ''):
+        logging.debug ('####### RESPONSE '+str(response))
+        if response and not ('jeu' in response) and (response!=''):
             if not isinstance(response,dict):
                 logging.debug ('###### RESPONSE IS A STRING - CONVERTING')
                 response = ast.literal_eval(response)
@@ -2201,14 +2070,11 @@ def getSystemName (sysid):
     logging.debug ('###### GOING TO GRAB SYSTEM NAME FROM LOCALDB')
     sql = 'SELECT `text` FROM systems WHERE id = %s'
     val = (sysid,)
-    mycursor = mydb.cursor(buffered=True)
-    try:
-        mycursor.execute(sql,val)
-        result =  mycursor.fetchall()[0][0]
-    except Exception as e:
-        logging.error ('###### COULD NOT QUERY DB, ERROR '+str(e))
-        result = None
-    logging.debug('###### FOUND '+str(result))
+    result,success = queryDB(sql,val,True,mydb)
+    if success:
+        logging.debug ('###### COULD LOCATE SYSTEM IN DB')
+    else:
+        logging.debug ('###### COULD NOT LOCATE SYSTEM IN DB')
     return result
 
 
@@ -2216,7 +2082,7 @@ def getSystemForRom(rom,sysid):
     file,romInfo = getGameInfo(CURRSSID,rom,rom[rom.rindex('/')+1:],md5(rom),sha1(rom),crc(rom),sysid)
     logging.debug ('###### RETURN FROM ROM INFO '+str(type(romInfo)))
     if romInfo == '' or romInfo == 'QUOTA' or romInfo == 'ERROR':
-        return None 
+        return None
     try:
         if not isinstance(romInfo,dict):
             logging.debug ('###### WE DID NOT GET A DICT - CONVERTING')
@@ -2241,7 +2107,7 @@ def getSystemForRom(rom,sysid):
                     mysisid = 0
         return getSystemName(mysisid)
     else:
-        return None
+        return getSystemName(0)
 
 def copyRoms (systemid,systemname,path,CURRSSID,extensions,outdir):
     ### COPY ROMS FOR SYSTEM ID IN PATH TO OUTDIR WITH NEW PATH AS SYSTEM WHERE THE ROM BELONGS TO
@@ -2257,6 +2123,7 @@ def copyRoms (systemid,systemname,path,CURRSSID,extensions,outdir):
         path = path + '/'
     logging.error ('###### STARTING SYSTEM '+str(systemname))
     for file in filelist:
+        logging.error ('-+-+-+-+-+-+ STARTING COPYING '+str(file)+' -+-+-+-+-+-+ ')
         commcount = commcount +1
         if commcount == 50:
             mydb.commit()
@@ -2267,16 +2134,16 @@ def copyRoms (systemid,systemname,path,CURRSSID,extensions,outdir):
         romSys = getSystemForRom(origfile,systemid)
         logging.debug ('###### SYSTEM FOR ROM IS '+str(romSys))
         if romSys:
-            origsystem = getSystemName(systemid).lower().replace(' ','')
+            origsystem = path[path[:-1].rindex('/')+1:-1]
             ### DESTINATION FILES
             videoofile = 'videos/'+sha1(origfile).lower()+'-video.mp4'
             imageofile = 'images/'+sha1(origfile).lower()+'-image.png'
             videofile = 'videos/'+sha1(origfile)+'-video.mp4'
             imagefile = 'images/'+sha1(origfile)+'-image.png'
-            bezelfile = file[:file.rindex('.')]+'.cfg'
+            bezelfile = file + '.cfg'
             newsys['name']=romSys.lower().replace(' ','').replace('.','')
             newsys['fullname']=romSys
-            newsys['path']=outdir+newsys['name']
+            newsys['path']=outdir + newsys['name'].replace('/','-')
             newsys['extension']=str(extensions)
             newsys['command']=''
             newsys['platform']=newsys['name']
@@ -2351,10 +2218,9 @@ def copyRoms (systemid,systemname,path,CURRSSID,extensions,outdir):
                     copyfile(thisfile,thisdfile)
                 except Exception as e:
                     logging.error ('###### COULD NOT COPY BEZEL '+str(e))
-            logging.error ('###### FINISHED COPYING '+str(file))
-            mydb.commit()    
         else:
             logging.error ('###### FAILED TO COPY ROM '+origfile+' TO DESTINATION')
+        logging.error ('-+-+-+-+-+-+ FINISHED COPYING '+str(file)+' -+-+-+-+-+-+ ')
     logging.error ('###### FINISHED SYSTEM '+str(systemname))
     return foundSys
 
@@ -2527,79 +2393,80 @@ def fuzzyMatch (a,b):
 
 def gameNameMatches(orig,chkname):
     ## Convert non ascii codes to normal codes
-    for chk in chkname['noms']:
-        logging.debug('##### '+str(chk))
-        chk = chk['text'].encode('ascii', 'ignore')
-        ### 'NN TODO
-        logging.debug ('####### NAME GRABBED - NAME INFERRED')
-        if chkNamesMatch(chk.upper(),replace_roman_numerals(orig.upper())):
+    ##for chk in chkname['noms']:
+    chk = chkname
+    logging.debug('##### '+str(chk))
+    chk = chk.encode('ascii', 'ignore')
+    ### 'NN TODO
+    logging.debug ('####### NAME GRABBED - NAME INFERRED')
+    if chkNamesMatch(chk.upper(),replace_roman_numerals(orig.upper())):
+        logging.info ('###### NAME MATCHES')
+        return True
+    if chkNamesMatch(chk.upper().replace('!',''),orig.upper()):
+        logging.info ('###### NAME MATCHES')
+        return True
+    if chkNamesMatch(chk.upper().replace('.',''),orig.upper()):
+        logging.info ('###### NAME MATCHES')
+        return True
+    if chkNamesMatch(chk.upper(),orig.upper()):
+        logging.info ('###### NAME MATCHES')
+        return True
+    if chkNamesMatch(chk.upper(),re.sub('\(.\)','',orig.upper()).strip()):
+        logging.info ('###### NAME MATCHES')
+        return True
+    if chkNamesMatch(chk.upper(),re.sub('\[.\]','',orig.upper()).strip()):
+        logging.info ('###### NAME MATCHES')
+        return True
+    if chkNamesMatch(chk.upper(),re.sub('\(.\)\[.\]','',orig.upper()).strip()):
+        logging.info ('###### NAME MATCHES')
+        return True
+    if chkNamesMatch(chk.upper(),re.sub('\[.\]\(.\)','',orig.upper()).strip()):
+        logging.info ('###### NAME MATCHES')
+        return True
+    if chkNamesMatch(chk.upper(),orig.replace(',','').upper()):
+        logging.info ('###### NAME MATCHES')
+        return True
+    if chkNamesMatch(chk.upper(),orig.replace(' AND ',' & ').upper()):
+        logging.info ('###### NAME MATCHES')
+        return True
+    if chkNamesMatch(chk.upper(),orig.replace(' & ',' AND ').upper()):
+        logging.info ('###### NAME MATCHES')
+        return True
+    if chkNamesMatch(chk.replace(' - ',' ').upper(),orig.upper()):
+        logging.info ('###### NAME MATCHES')
+        return True
+    if chkNamesMatch(chk.upper(),orig.replace(' Dr ',' Dr. ').upper()):
+        logging.info ('###### NAME MATCHES')
+        return True
+    if chkNamesMatch(chk.upper(),orig.replace(':','-').upper()):
+        logging.info ('###### NAME MATCHES')
+        return True
+    if chkNamesMatch(chk.upper(),orig.replace(':',' -').upper()):
+        logging.info ('###### NAME MATCHES')
+        return True
+    if chkNamesMatch(chk.upper(),orig.replace(':',' - ').upper()):
+        logging.info ('###### NAME MATCHES')
+        return True
+    if chkNamesMatch(chk.upper(),orig.replace(':',' -').upper()):
+        logging.info ('###### NAME MATCHES')
+        return True
+    if chkNamesMatch(chk.upper(),orig.upper()+' THE'):
+        logging.info ('###### NAME MATCHES')
+        return True
+    if fuzzyMatch(chk,orig):
+        logging.info ('###### NAME MATCHES')
+        return True          
+    matches = re.search('\w*\d',orig)
+    if matches:
+        splitnum = matches.group(0)
+        newint = re.sub (r'(\d)',r' \1',splitnum)
+        splitnum = re.sub('\w*\d',newint,orig)
+        if chkNamesMatch(chk.upper(),splitnum.upper()):
             logging.info ('###### NAME MATCHES')
             return True
-        if chkNamesMatch(chk.upper().replace('!',''),orig.upper()):
+        if chkNamesMatch(chk.upper(),splitnum.upper()+' THE'):
             logging.info ('###### NAME MATCHES')
             return True
-        if chkNamesMatch(chk.upper().replace('.',''),orig.upper()):
-            logging.info ('###### NAME MATCHES')
-            return True
-        if chkNamesMatch(chk.upper(),orig.upper()):
-            logging.info ('###### NAME MATCHES')
-            return True
-        if chkNamesMatch(chk.upper(),re.sub('\(.\)','',orig.upper()).strip()):
-            logging.info ('###### NAME MATCHES')
-            return True
-        if chkNamesMatch(chk.upper(),re.sub('\[.\]','',orig.upper()).strip()):
-            logging.info ('###### NAME MATCHES')
-            return True
-        if chkNamesMatch(chk.upper(),re.sub('\(.\)\[.\]','',orig.upper()).strip()):
-            logging.info ('###### NAME MATCHES')
-            return True
-        if chkNamesMatch(chk.upper(),re.sub('\[.\]\(.\)','',orig.upper()).strip()):
-            logging.info ('###### NAME MATCHES')
-            return True
-        if chkNamesMatch(chk.upper(),orig.replace(',','').upper()):
-            logging.info ('###### NAME MATCHES')
-            return True
-        if chkNamesMatch(chk.upper(),orig.replace(' AND ',' & ').upper()):
-            logging.info ('###### NAME MATCHES')
-            return True
-        if chkNamesMatch(chk.upper(),orig.replace(' & ',' AND ').upper()):
-            logging.info ('###### NAME MATCHES')
-            return True
-        if chkNamesMatch(chk.replace(' - ',' ').upper(),orig.upper()):
-            logging.info ('###### NAME MATCHES')
-            return True
-        if chkNamesMatch(chk.upper(),orig.replace(' Dr ',' Dr. ').upper()):
-            logging.info ('###### NAME MATCHES')
-            return True
-        if chkNamesMatch(chk.upper(),orig.replace(':','-').upper()):
-            logging.info ('###### NAME MATCHES')
-            return True
-        if chkNamesMatch(chk.upper(),orig.replace(':',' -').upper()):
-            logging.info ('###### NAME MATCHES')
-            return True
-        if chkNamesMatch(chk.upper(),orig.replace(':',' - ').upper()):
-            logging.info ('###### NAME MATCHES')
-            return True
-        if chkNamesMatch(chk.upper(),orig.replace(':',' -').upper()):
-            logging.info ('###### NAME MATCHES')
-            return True
-        if chkNamesMatch(chk.upper(),orig.upper()+' THE'):
-            logging.info ('###### NAME MATCHES')
-            return True
-        if fuzzyMatch(chk,orig):
-            logging.info ('###### NAME MATCHES')
-            return True          
-        matches = re.search('\w*\d',orig)
-        if matches:
-            splitnum = matches.group(0)
-            newint = re.sub (r'(\d)',r' \1',splitnum)
-            splitnum = re.sub('\w*\d',newint,orig)
-            if chkNamesMatch(chk.upper(),splitnum.upper()):
-                logging.info ('###### NAME MATCHES')
-                return True
-            if chkNamesMatch(chk.upper(),splitnum.upper()+' THE'):
-                logging.info ('###### NAME MATCHES')
-                return True
 
     logging.info ('###### THERE IS NO MATCH')
     return False
@@ -2995,9 +2862,9 @@ def updateFile(path,localSHA,localCRC,localMD):
 def lookUpROMinDB (romsha1,romcrc,rommd5):
     ### LOOKUP ROM IN DB FIRST
     sqlst = 'select gameid from gameRoms gr where romsha1 = "'+romsha1+'" or romcrc = "'+romcrc+'" or rommd5 ="'+rommd5+'"'
-    results = executeSQL(sqlst)
-    logging.debug ('###### RESULT FROM DB QUERY LOOKUP ROM '+str(results))
-    return results
+    result,success = queryDB(sqlst,(),False,mydb)
+    logging.debug ('###### RESULT FROM DB QUERY LOOKUP ROM '+str(result))
+    return result
 
 def renameFiles():
     logging.info ('###### - STARTING FILE RENAMING PROCESS')
@@ -3035,26 +2902,6 @@ def renameFiles():
             deleteHashFromDB (thisfile)
     logging.info ('###### - FINISHED FILE RENAMING PROCESS - TOTAL FILES PROCESSED '+str(procfiles))
 
-def executeSQL(sqlst):
-    logging.debug('###### SQL '+sqlst)
-    result = None
-    mycursor = mydb.cursor(buffered=True)
-    try:
-        if 'SELECT' in sqlst:
-            logging.debug('###### IS SELECT ')
-            mycursor.execute(sqlst)
-            result =  mycursor.fetchall()
-        else:
-            logging.debug('###### IT IS NOT SELECT ')
-            logging.debug('###### '+sqlst)
-            mycursor.execute(sqlst)
-            result = True
-            logging.info ('###### DB UPDATED OK')
-    except Exception as e:
-        logging.error ('###### COULD NOT EXECUTE SQL '+sqlst+' IN DB ' +str(e))
-        result = None
-    return result
-
 def insertDataInLocalDB(obj,table):
     sqlst= 'REPLACE INTO '+table+' '
     columns = ''
@@ -3067,76 +2914,83 @@ def insertDataInLocalDB(obj,table):
         ## TODO CREATE SQL AND INSERT
     sqlst = sqlst+columns+' VALUES '+values
     logging.debug ('####### SQL STATEMENT GENERATED '+sqlst)
-    executeSQL(sqlst)
+    result,success = queryDB(sqlst,(),True,mydb)
+    return success
 
 def insertSystemInLocalDb(system):
     sqlst = 'SELECT id FROM systems WHERE id = '+str(system['id'])
-    result = executeSQL (sqlst)
+    result,success = queryDB(sqlst,(),False,mydb)
     logging.debug ('###### SQL RESULT FROM SYSTEMS EQUALS '+str(result))
     if (not result) or result == []:
         logging.info ('###### GOING TO UPDATE SYSTEMS TABLE')
         sqlst = 'INSERT INTO systems (id,`text`,`type`) values ('+str(system['id'])+',"'+system['noms']['nom_eu']+'","'+system['type']+'")'
     else:
         sqlst = 'UPDATE systems SET `text`="'+system['noms']['nom_eu']+'",`type`="'+system['type']+'" where id = '+str(system['id'])
-    executeSQL (sqlst)
-    mydb.commit()
+    result,success = queryDB(sqlst,(),True,mydb)
+    return success
 
 def insertEditorInLocalDb(edid,edname):
     sqlst = 'SELECT text FROM editors WHERE id = '+str(edid)
-    result = executeSQL (sqlst)
+    result,success = queryDB(sqlst,(),False,mydb)
     logging.debug ('###### SQL RESULT FROM EDITORS EQUALS '+str(result))
     if (not result) or result == []:
         logging.info ('###### GOING TO UPDATE EDITORS TABLE')
         if len(edname) >  100:
 	    edname = edname[:99]
         sqlst = 'INSERT INTO editors (id,text) values ('+str(edid)+',"'+edname+'")'
-        executeSQL (sqlst)
-        mydb.commit()
+        result,success = queryDB(sqlst,(),True,mydb)
+        return success
 
 def insertGameNamesInDB(id,names):
-    if not isinstance(names,list):
-        new_names=[]
-        for key in names.keys():
-            myname=dict()
-            myname['region']=key.replace('nom_','')
-            myname['text']= names[key]
-            new_names.append(myname)
-        names = new_names
-        logging.debug('###### NAMES CONVERTED TO '+str(names))
-    logging.debug ('###### GOING TO INSERT NAMES IN DB '+str(names))
+    try:
+        if not isinstance(names,list):
+            new_names=[]
+            for key in names.keys():
+                myname=dict()
+                myname['region']=key.replace('nom_','')
+                myname['text']= names[key]
+                new_names.append(myname)
+            names = new_names
+            logging.debug('###### NAMES CONVERTED TO '+str(names))
+    except Exception as e:
+        logging.error ('###### ERROR WHILE CREATING NAMES '+str(e))
+    logging.debug ('###### GOING TO ACTUALLY INSERT NAMES IN DB '+str(names))
     for name in names:
         try:
             sql = 'SELECT id FROM gameNames where gameid='+str(id)+' and region ="'+name['region']+'"'
-        except:
-            logging.debug ('###### THERE WAS AN ERROR GETTING NAMES')
+        except Exception as e:
+            logging.debug ('###### THERE WAS AN ERROR INSERTING NAMES '+str(e))
             return
-        result = executeSQL(sql)
+        result,success = queryDB(sql,(),True,mydb)
         logging.debug('###### GOT RESULT FROM NAMES CHECK '+str(result))
         if result == None or result == []:
             sqlst = 'INSERT INTO gameNames (gameid,region,text) VALUES ('+str(id)+',"'+name['region']+'","'+name['text']+'")'
-            executeSQL(sqlst)
+            result,success = queryDB(sqlst,(),True,mydb)
 
 def insertSynopsisInDB(id,synopsis):
-    if not isinstance(synopsis,list):
-        new_syn = []
-        for key in synopsis:
-            my_syn = dict()    
-            my_syn['langue']=key.replace('synopsis_','')
-            my_syn['text']=synopsis[key]
-            new_syn.append(my_syn)
-        synopsis = new_syn
+    try:
+        if not isinstance(synopsis,list):
+            new_syn = []
+            for key in synopsis:
+                my_syn = dict()    
+                my_syn['langue']=key.replace('synopsis_','')
+                my_syn['text']=synopsis[key]
+                new_syn.append(my_syn)
+            synopsis = new_syn
+    except Exception as e:
+        logging.error ('###### ERROR CREATING SYNOPSIS '+str(e))
     for syn in synopsis:
         try:
             sql = 'SELECT id FROM gameSynopsis where gameid='+str(id)+' and langue ="'+syn['langue']+'"'
         except Exception as e:
             logging.error ('###### THERE IS AN ERROR IN THE SYNOPSIS ['+str(syn)+'] '+str(e))
-        result = executeSQL(sql)
+        result,success = queryDB(sql,(),False,mydb)
         logging.debug('###### GOT RESULT FROM SYNOPSIS CHECK '+str(result))
         if result == None or result == []:
             sqlst = 'INSERT INTO gameSynopsis (gameid,langue,text) VALUES ('+str(id)+',"'+syn['langue']+'","'+syn['text']+'")'
-            executeSQL(sqlst)
+            result,success = queryDB(sqlst,(),True,mydb)
 
-def insertGameRomsInDB(id,roms):
+def insertGameRomsInDB(id,roms,sysid):
     logging.debug ('###### INSERTING ROMS IN DB '+str(roms))
     ###### SCREENSCRAPER DOES NOT ALWAYS HAVE SHA,CRC AND MD%
     ###### SO WE HAVE TP CHECK TO AVOID ERRORS
@@ -3154,10 +3008,11 @@ def insertGameRomsInDB(id,roms):
         except:
             rommd5 = 'None'
         sql = 'SELECT id FROM gameRoms where romsha1="'+romsha1+'" or rommd5="'+rommd5+'" or romcrc="'+romcrc+'"'
-        result = executeSQL(sql)
+        result,success = queryDB(sql,(),True,mydb)
         logging.debug('###### GOT RESULT FROM ROM CHECK '+str(result))
-        if result == None or result == []:
-            sqlst = 'INSERT INTO gameRoms (romfilename,romsha1,romcrc,rommd5,beta,demo,proto,trad,hack,unl,alt,best,netplay,gameid) VALUES ('
+        if result is None or result == []:
+            logging.debug ('####### THE ROM IS NOT IN THE DB')
+            sqlst = 'INSERT INTO gameRoms (romfilename,romsha1,romcrc,rommd5,beta,demo,proto,trad,hack,unl,alt,best,netplay,gameid,systemid) VALUES ('
             sqlst = sqlst + '"' +rom['romfilename']+ '",'
             if romsha1 == 'None':
                 romsha1 = ''
@@ -3177,9 +3032,10 @@ def insertGameRomsInDB(id,roms):
             sqlst = sqlst + str(rom['alt'])+","
             sqlst = sqlst + str(rom['best'])+","
             sqlst = sqlst + str(rom['netplay'])+","
-            sqlst = sqlst + str(id)+")"
+            sqlst = sqlst + str(id)+","
+            sqlst = sqlst + str(sysid)+")"
             logging.debug ('###### GOING TO EXECUTE SQL')
-            executeSQL(sqlst)
+            result,success = queryDB(sqlst,(),True,mydb)
 
 def mediaConvertor(media,mediaList):
     for key in media.keys():
@@ -3223,7 +3079,7 @@ def insertGameMediasInDB(id,medias):
             sql = 'SELECT id FROM gameMedias where gameid='+str(id)+' and region ="'+mediaregion+'" and type = "'+media['type']+'" and format="'+media['format']+'"'
         except Exception as e:
             logging.error ('###### COUL NOT CREATE MEDIA QUERY ['+str(medias)+']'+str(e))
-        result = executeSQL(sql)
+        result,success = queryDB(sql,(),True,mydb)
         logging.debug('###### GOT RESULT FROM MEDIAS CHECK '+str(result))
         if result == None or result == []:
             sqlst = 'INSERT INTO gameMedias (type,url,region,format,cnt,gameid) VALUES ('
@@ -3233,7 +3089,7 @@ def insertGameMediasInDB(id,medias):
             sqlst = sqlst + '"' +media['format']+ '",'
             sqlst = sqlst + str(counter)+","
             sqlst = sqlst + str(id)+")"
-            executeSQL(sqlst)
+            result,success = queryDB(sqlst,(),True,mydb)
             counter = counter + 1
 
 def insertGameDatesInDB(id,dates):
@@ -3248,14 +3104,14 @@ def insertGameDatesInDB(id,dates):
         dates = new_dates
     for rdate in dates:
         sql = 'SELECT id FROM gameDates where gameid='+str(id)+' and region ="'+rdate['region']+'"'
-        result = executeSQL(sql)
+        result,success = queryDB(sql,(),True,mydb)
         logging.debug('###### GOT RESULT FROM DATES CHECK '+str(result))
         if result == None or result == []:
             sqlst = 'INSERT INTO gameDates (text,region,gameid) VALUES ('
             sqlst = sqlst + '"' +rdate['text']+ '",'
             sqlst = sqlst + '"' +rdate['region']+ '",'
             sqlst = sqlst + str(id)+")"
-            executeSQL(sqlst)
+            result,success = queryDB(sqlst,(),True,mydb)
 
 def insertGameInLocalDb(gameInfo):
     logging.debug ('###### GAMEINFO IS '+str(gameInfo))
@@ -3298,7 +3154,6 @@ def insertGameInLocalDb(gameInfo):
     except Exception as e:
         logging.error ('###### ATTRIBUTE EDITOR NOT FOUND, CREATING DEFAULT FOR '+str(game['id']))
         game['editeur'] = 0
-        insertEditorInLocalDb(game['editeur'],'Unknown')
     logging.debug ('###### GAME INFO IS '+str(game))
     insertDataInLocalDB(game,'games')
     try:
@@ -3313,7 +3168,7 @@ def insertGameInLocalDb(gameInfo):
         logging.error ('###### COULD NOT FIND SYNOPSIS FOR THE GAME -'+str(e)+' - DEFAULTING')
         ###synopsis = [{'langue':'UNK','text':''}]
     try:
-        insertGameRomsInDB(game['id'],  gameInfo['roms'])
+        insertGameRomsInDB(game['id'],  gameInfo['roms'],game['system'])
     except Exception as e:
         logging.error ('###### COULD NOT FIND ROMS FOR THE GAME - LEAVING EMPTY '+str(e))
     try:
@@ -3396,6 +3251,10 @@ if migrateDB:
     params =dict(fixParams)
     numGames = 214000 #276000
     response = 'QUOTA'
+    #### THis game with id Zero is going to be used to handle unknown roms
+    zeroGame={'id':'0'}
+    insertGameInLocalDb(zeroGame)
+    mydb.commit()
     while gameid <= numGames:
         while response == 'QUOTA' or response == 'ERROR':
             params['gameid'] = str(gameid)

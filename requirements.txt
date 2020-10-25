@@ -1,0 +1,13 @@
+lhafile==0.2.2
+mysql-connector==2.2.9
+numpy==1.16.6
+olefile==0.46
+Pillow==6.2.2
+PyBluez==0.22
+pycryptodomex==3.6.1
+pymediainfo==4.1
+simplejson==3.16.0
+six==1.15.0
+snakefood==1.4
+Unidecode==1.1.1
+wget==3.2

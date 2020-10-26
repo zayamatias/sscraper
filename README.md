@@ -17,7 +17,7 @@ If you have any questions, you can always contact me in twitter:[8bitzaya](https
 
 **The script will run on a single thread, so it will not be super fast, parsing 70000 roms with an empty local DB may take up to 3 days or more depending on circumstances**
 
-Also, if you do a scrape of the 200k games that are in SS and store them in the localDB, you would need SS only to download media (May add that feature in the future)
+Also, if you do a scrape of the 200k games that are in SS and store them in the localDB, you would need SS only to download media (May add that media cachung feature in the future)
 
 ## Default Behavior
 

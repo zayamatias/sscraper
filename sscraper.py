@@ -138,9 +138,11 @@ UNKDIR = config.UNKDIR
 
 cookies = cookielib.LWPCookieJar()
 
-arcadeSystems = ('75','142','56','151','6','7','8','196','35','47','49','54','55','56','68','69','112','147','148','149','150','151','152','153','154','155','156','157','158','159','160',
-                 '161','162','163','164','165','166','167','168','169','170','173','174','175','176','177','178','179','180','181','182','183','184','185','186','187','188','189','190','191',
-                 '192','193','194','195','196','209')
+arcadeSystems = []
+
+#arcadeSystems = ('75','142','56','151','6','7','8','196','35','47','49','54','55','56','68','69','112','147','148','149','150','151','152','153','154','155','156','157','158','159','160',
+#                 '161','162','163','164','165','166','167','168','169','170','173','174','175','176','177','178','179','180','181','182','183','184','185','186','187','188','189','190','191',
+#                 '192','193','194','195','196','209')
 
 class Game:
     ### THIS IS THE GAME CLASS, IT WILL HOLD INFORMATION OF EACH SCRAPED GAME
@@ -217,7 +219,7 @@ class Game:
         else:
             return None
 
-def queryDB(sql,values,directCommit,thisDB):
+def queryDB(sql,values,directCommit,thisDB,logerror=False):
     ##logging.debug ('+++++++ '+sql)
     mycursor = getDBCursor(thisDB)
     if mycursor:
@@ -228,10 +230,12 @@ def queryDB(sql,values,directCommit,thisDB):
                 try:
                     mycursor.execute(sql, values)
                     myresult = mycursor.fetchall()
-                    logging.debug ('@@@@@@@@@@ '+str(mycursor.statement))
+                    if logerror:
+                        logging.error ('@@@@@@@@@@ '+str(mycursor.statement))
+                    #logging.debug ('@@@@@@@@@@ '+str(mycursor.statement))
                 except Exception as e:
-                    logging.debug ('###### COULD NOT EXECUTE SELECT QUERY '+str(e))
-                    logging.debug ('@@@@@@@@@@ '+str(mycursor.statement))
+                    logging.error ('###### COULD NOT EXECUTE SELECT QUERY '+str(e))
+                    #logging.debug ('@@@@@@@@@@ '+str(mycursor.statement))
                     return None,False
                 if mycursor.rowcount == 0:
                     logging.debug ('###### COULD NOT FIND IN THE DB')
@@ -246,14 +250,16 @@ def queryDB(sql,values,directCommit,thisDB):
                 try:
                     mycursor.execute(sql, values)
                     logging.debug('####### QUERY EXECUTED PROPERLY')
-                    ##logging.debug ('@@@@@@@@@@ '+str(mycursor.statement))
+                    if logerror:
+                        logging.error ('@@@@@@@@@@ '+str(mycursor.statement))
+                    #logging.debug ('@@@@@@@@@@ '+str(mycursor.statement))
                 except Exception as e:
                     logging.error ('###### COULD NOT EXECUTE QUERY '+str(e))
                     ###logging.error ('@@@@@@@@@@ '+str(mycursor.statement))
                     return None,False
                 if directCommit and not migrateDB:
                     thisDB.commit()
-                    logging.debug('####### AND I COMMITTED')
+                    #logging.debug('####### AND I COMMITTED')
             return None,True
         except Exception as e:
             logging.error ('###### COULD NOT EXECUTE QUERY '+str(e))    
@@ -1740,19 +1746,33 @@ def grabData(system, path, CURRSSID, acceptedExtens):
     cleanMedia (destpath,'*.png')
     logging.debug ('###### DONE')
 
+def isArcadeSystem(sysid):
+    global arcadeSystems
+    isit = sysid in arcadeSystems
+    logging.debug ('###### IS AN ARCADE SYSTEM '+str(sysid)+' in '+str(arcadeSystems)+' = '+str(isit))
+    return isit
+
+def arcadeSystemsList():
+    global arcadeSystems
+    ret ='('
+    for arcs in arcadeSystems:
+        ret=ret+str(arcs)+','
+    ret=ret[:-1]+')'
+    logging.debug ('###### RETURNING SYSTEM LIST '+ret)
+    return ret
+
 def findMissingGame(gameName,systemid):
     logging.debug('###### WILL TRY TO FIND GAMES '+gameName+' FOR SYSTEM '+str(systemid))
+    qName =gameName[0]+'%'
     sql = "SELECT games.id AS GameID, games.system AS SystemID, gn.text AS gameName , gr.romfilename AS Rom\n\
            FROM gameNames gn\n\
            LEFT JOIN games ON games.id=gn.gameid\n\
            LEFT JOIN gameRoms gr ON gr.gameid=gn.gameid\n\
-           WHERE gn.gameid IN (SELECT DISTINCT gr.gameid FROM gameRoms gr WHERE romfilename LIKE %s or gn.text LIKE %s)\n\
-           AND games.system=%s"
-    qName =gameName[0]+'%'
+           WHERE gn.gameid IN (SELECT DISTINCT gr.gameid FROM gameRoms gr WHERE romfilename LIKE %s or gn.text LIKE %s)\
+           AND systemid in (select id from systems where parent = (select parent from systems where id = %s))"
     val = (qName,qName,systemid)
     srchName = gameName[:gameName.rindex('.')]
-    logging.debug('###### ['+gameName+'] ---  ['+srchName+']')
-    results,success = queryDB(sql,val,False,mydb)
+    results,success = queryDB(sql,val,False,mydb,True)
     gameId = 0
     if results:
         logging.debug('###### THERE ARE RESULTS, WILL TRY TO MATCH WITH '+srchName)
@@ -2256,7 +2276,6 @@ def scrapeRoms(CURRSSID,sortRoms=False,outdir=''):
                 sysname ='unknown'
                 ### ITERATE THROU CHILD TAGS OF SYSTEM
                 for system in child:
-                    ### CHECK FOR EXTENSION TAG, THAT HOLDS THE LIST OF VALIDD EXTENSIONS FOR THE SYSTEM
                     if system.tag == 'extension':
                         try:
                             ### CREATE A LIST WITH ALL VALID EXTENSIONS (USUALLY THE EXTENSIONS ARE SEPARATED BY A SPACE IN THE CONFIG FILE)
@@ -2265,6 +2284,7 @@ def scrapeRoms(CURRSSID,sortRoms=False,outdir=''):
                             ### IF WE CANNOT GET A LIST OF EXTENSIONS FOR A SYSTEM WE DEFAULT TO 'ZIP'
                             extensions = ['zip']
                     if system.tag == 'ssname':
+                        logging.error(str(system))### CHECK FOR EXTENSION TAG, THAT HOLDS THE LIST OF VALIDD EXTENSIONS FOR THE SYSTEM
                         ### THIS IS A SPECIAL TAG, IT HAS THE SYSTEM NAME AS DEFINED IN THE SCRAPING SITE, THIS IS TO MATCH AND GET SYSTEM ID
                         try:
                             sysname = system.text.upper()
@@ -2272,17 +2292,22 @@ def scrapeRoms(CURRSSID,sortRoms=False,outdir=''):
                             ### SO WE DIDN'T HAVE A SPECIAL TAGE, SYSTEM IS UNKNOWN
                             sysname = 'unknown'
                             logging.error('###### ERROR GETTING LOCAL SYSTEM ' + str(e))
-                    ### LOGIC TO FIND systemid
-                    for mysystem in systems:
-                        ### API RETRUS SOMETIMES MORE THAN ONE SYSTEM NAME SO WE NEED TO ITERATE THROUGH ALL OF THEM
-                        for apisysname in mysystem['noms']:
-                            if sysname.upper()==mysystem['noms'][apisysname].upper():
-                                ### WE FOUND A MATCH SO WE ASSIGN A SYSTEM ID
-                                systemid = str(mysystem['id'])
-                                systemname = mysystem['noms']
-                                logging.info ('###### FOUND ID '+systemid+' FOR SYSTEM '+sysname)
-                                ### AND WE SKIP
-                                continue
+                        ### LOGIC TO FIND systemid
+                        foundsys = False
+                        for mysystem in systems:
+                            ### API RETRUS SOMETIMES MORE THAN ONE SYSTEM NAME SO WE NEED TO ITERATE THROUGH ALL OF THEM
+                            for apisysname in mysystem['noms']:
+                                logging.error ('###### COMPARIMG '+sysname.upper()+' WITH '+mysystem['noms'][apisysname].upper())
+                                if sysname.upper()==mysystem['noms'][apisysname].upper():
+                                    ### WE FOUND A MATCH SO WE ASSIGN A SYSTEM ID
+                                    systemid = str(mysystem['id'])
+                                    systemname = mysystem['noms']
+                                    logging.error ('###### FOUND ID '+systemid+' FOR SYSTEM '+sysname)
+                                    foundsys = True
+                                    ### AND WE SKIP
+                                    break
+                            if foundsys:
+                                break
                     ### TRY TO GET THE LOCAL PATH FOR THE SYSTEM, WHERE ROMS ARE STORED
                     if system.tag == 'path':
                         path = system.text
@@ -2389,7 +2414,7 @@ def fuzzyMatch (a,b):
         logging.debug ('###### FOUND '+str(mparts)+' OF '+str(len(bparts)))
     return False
 
-
+################### PARENT IDS OF SYSTEMS TO CHECK
 
 def gameNameMatches(orig,chkname):
     ## Convert non ascii codes to normal codes
@@ -2397,14 +2422,13 @@ def gameNameMatches(orig,chkname):
     ###### Remove parentehsis and first space
     rmname = re.sub(r'\s\(.*\)','',chkname)
     ckname = re.sub(r'\s\(.*\)','',orig)
+    ckname = ckname.replace('_',' ')
     if '.' in rmname:
         rmname=rmname[:rmname.rindex('.')]
     if rmname.upper() == ckname.upper():
         logging.error ('///////'+rmname+'//////'+orig)
         return True
-    
     chk = chkname
-    logging.debug('##### '+str(chk))
     chk = chk.encode('ascii', 'ignore')
     ### 'NN TODO
     logging.debug ('####### NAME GRABBED - NAME INFERRED')
@@ -2930,12 +2954,40 @@ def insertSystemInLocalDb(system):
     sqlst = 'SELECT id FROM systems WHERE id = '+str(system['id'])
     result,success = queryDB(sqlst,(),False,mydb)
     logging.debug ('###### SQL RESULT FROM SYSTEMS EQUALS '+str(result))
+    try:
+        parent = str(system['parentid'])
+    except Exception as e:
+        logging.debug ('###### COULD NOT FIND PARENT SYSTEM')
+        parent = str(system['id'])
+    try:
+        recalbox = system['noms']['nom_recalbox']
+    except Exception as e:
+        logging.debug ('###### COULD NOT FIND RECALBOX NAME')
+        recalbox = ''
+    try:
+        retropie = system['noms']['nom_retropie']
+    except Exception as e:
+        logging.debug ('###### COULD NOT FIND RETROPIE NAME')
+        retropie = ''
+    try:
+        launchbox = system['noms']['nom_launchbox']
+    except Exception as e:
+        logging.debug ('###### COULD NOT FIND LAUNCHBOX NAME')
+        launchbox = ''
+    try:
+        hyperspin = system['noms']['nom_hyperspin']
+    except Exception as e:
+        logging.debug ('###### COULD NOT FIND HYPERSPIN NAME')
+        hyperspin = ''
     if (not result) or result == []:
-        logging.info ('###### GOING TO UPDATE SYSTEMS TABLE')
-        sqlst = 'INSERT INTO systems (id,`text`,`type`) values ('+str(system['id'])+',"'+system['noms']['nom_eu']+'","'+system['type']+'")'
+        logging.info ('###### GOING TO INSERT IN SYSTEMS TABLE')
+        values = (system['id'],system['noms']['nom_eu'],system['type'],int(parent),recalbox,retropie,launchbox,hyperspin)
+        sqlst = 'INSERT INTO systems (id,`text`,`type`,parent,recalbox,retropie,launchbox,hyperspin) values (%s,%s,%s,%s,%s,%s,%s,%s)'
     else:
-        sqlst = 'UPDATE systems SET `text`="'+system['noms']['nom_eu']+'",`type`="'+system['type']+'" where id = '+str(system['id'])
-    result,success = queryDB(sqlst,(),True,mydb)
+        logging.info ('###### GOING TO UPDATE SYSTEMS TABLE')
+        values = (system['noms']['nom_eu'],system['type'],int(parent),recalbox,retropie,launchbox,hyperspin,system['id'])
+        sqlst = 'UPDATE systems SET `text`=%s , `type`=%s , parent=%s , recalbox=%s , retropie=%s , launchbox=%s , hyperspin=%s where id = %s'
+    result,success = queryDB(sqlst,values,True,mydb)
     return success
 
 def insertEditorInLocalDb(edid,edname):
@@ -3238,6 +3290,11 @@ def createEsConfig(systems,dir):
 
 
 if sortroms !='':
+    arcadeSystemsQ = queryDB('SELECT id FROM systems WHERE TYPE=%s',('arcade',),False,mydb)
+    for arcadesys in arcadeSystemsQ[0]:
+        arcadeSystems.append(str(arcadesys[0]))
+    arcadeSystems.append('75')
+    logging.debug ('###### ARCADE SYSTEMS '+str(arcadeSystems))
     ### SORT YOUR ROMS, IT WILL TAKE YOUR PARAMETER AS DESTINATION DIRECTORY AND CREATE A STRUCTURE
     ### BASED ON THE SYSTEM THE ROM BELONGS TO
     logging.info ('###### GOING TO SORT YOUR ROMS')
@@ -3254,6 +3311,7 @@ if migrateDB:
         logging.debug ('###### SYSTEM '+str(system))
         insertSystemInLocalDb (system)    
     ### first import all games into local DB
+    mydb.commit()
     maxssid = len(config.ssid)
     currssid = 0
     gameid = int(startid)

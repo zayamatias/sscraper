@@ -32,8 +32,14 @@ CREATE TABLE `systems` (
   `id` int(11) NOT NULL,
   `text` varchar(100) DEFAULT NULL,
   `type` varchar(30) DEFAULT NULL,
+  `parent` int(11) DEFAULT NULL,
+  `recalbox` varchar(100) DEFAULT NULL,
+  `retropie` varchar(100) DEFAULT NULL,
+  `launchbox` varchar(100) DEFAULT NULL,
+  `hyperspin` varchar(100) DEFAULT NULL,
   PRIMARY KEY (`id`),
-  KEY `systems_type_IDX` (`type`) USING BTREE
+  KEY `systems_type_IDX` (`type`) USING BTREE,
+  KEY `systems_parent_IDX` (`parent`) USING BTREE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- romhashes.games definition

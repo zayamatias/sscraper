@@ -106,7 +106,7 @@ def initiateDBConnect():
 
 mydb = initiateDBConnect()
 
-fixedURL = "https://www.screenscraper.fr/api"
+fixedURL = "https://clone.screenscraper.fr/api"
 
 testAPI = "ssuserInfos"
 
@@ -400,7 +400,7 @@ def parsePossibleErrors(response):
     if 'Error 5' in response:
         logging.error ('###### THERE IS A SERVER ERROR '+str(response))
         response = 'FAILED'
-    if ('urlopen error timed out' in response.lower()):
+    if ('urlopen error' in response.lower()):
         logging.error ('###### THERE IS A MOMENTARY SERVER ERROR '+str(response))
         response = 'RETRY'
     return response
@@ -1801,13 +1801,21 @@ def arcadeSystemsList():
 def findMissingGame(gameName,systemid):
     logging.debug('###### WILL TRY TO FIND GAMES '+gameName+' FOR SYSTEM '+str(systemid))
     qName =gameName[0]+'%'
+    sql = "SELECT gs.id as gameID, `system`, COALESCE (gn.`text`,'----') as gameName, COALESCE (gr.romfilename,'----') as romName FROM games gs\
+           LEFT JOIN gameNames gn ON gn.gameid = gs.id\
+           LEFT JOIN gameRoms gr on gr.gameid = gs.id\
+           WHERE gs.`system` in (SELECT sys.id FROM systems sys WHERE sys.parent =\
+           (SELECT sys1.parent FROM systems sys1 WHERE sys1.id = %s))\
+           AND ((gn.`text` LIKE %s) or (gr.romfilename LIKE %s))"
+    '''
     sql = "SELECT games.id AS GameID, games.system AS SystemID, gn.text AS gameName , gr.romfilename AS Rom\n\
            FROM gameNames gn\n\
            LEFT JOIN games ON games.id=gn.gameid\n\
            LEFT JOIN gameRoms gr ON gr.gameid=gn.gameid\n\
            WHERE gn.gameid IN (SELECT DISTINCT gr.gameid FROM gameRoms gr WHERE romfilename LIKE %s or gn.text LIKE %s)\
            AND systemid in (select id from systems where parent = (select parent from systems where id = %s))"
-    val = (qName,qName,systemid)
+    '''
+    val = (systemid,qName,qName)
     srchName = gameName[:gameName.rindex('.')]
     results,success = queryDB(sql,val,False,mydb,True)
     gameId = 0
@@ -3353,7 +3361,7 @@ if migrateDB:
     currssid = 0
     gameid = int(startid)
     params =dict(fixParams)
-    numGames = 215000 #215000
+    numGames = 213623 #215000
     response = 'QUOTA'
     #### THis game with id Zero is going to be used to handle unknown roms
     zeroGame={'id':'0'}

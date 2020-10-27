@@ -32,6 +32,7 @@ import argparse
 import re
 import cookielib
 import config
+import socket
 
 
 ### Parse arguments first
@@ -220,7 +221,7 @@ class Game:
             return None
 
 def queryDB(sql,values,directCommit,thisDB,logerror=False):
-    ##logging.debug ('+++++++ '+sql)
+    logging.debug ('+++++++ '+sql)
     mycursor = getDBCursor(thisDB)
     if mycursor:
         logging.debug('###### GOT A CURSOR FOR THE DB')
@@ -238,12 +239,14 @@ def queryDB(sql,values,directCommit,thisDB,logerror=False):
                     #logging.debug ('@@@@@@@@@@ '+str(mycursor.statement))
                     return None,False
                 if mycursor.rowcount == 0:
-                    logging.debug ('###### COULD NOT FIND IN THE DB')
+                    logging.info ('###### COULD NOT FIND IN THE DB')
                     return None,False
                 else:
                     if mycursor.rowcount == 1:
+                        logging.debug ('###### COULD FIND ONE RESULT '+str(myresult[0]))
                         return myresult[0][0],True
                     else:
+                        logging.debug ('###### FOUND SEVERAL RESULTS')
                         return myresult,True
             else:
                 logging.debug('####### IT IS NOT A SELECT QUERY')
@@ -270,7 +273,6 @@ def queryDB(sql,values,directCommit,thisDB,logerror=False):
 
 
 def getDBCursor(theDB):
-    global mydb
     connected = False
     while not connected:
         logging.debug ('###### TRYING TO CONNECT')
@@ -331,7 +333,7 @@ def getGameName(jsondata,path):
     return name
 
 def updateInDBV2Call(api,params,response):
-    global mydb
+    response = response.strip()
     logging.debug ('###### INSIDE INSERT INTO DB FOR V2 CALL '+str(params))
     ### Update the DB with the call to V2
     if response == 'ERROR' or response =='QUOTA':
@@ -343,10 +345,20 @@ def updateInDBV2Call(api,params,response):
     sql = "INSERT INTO apicache (apiname,parameters,result) VALUES (%s,%s,%s)"
     val = (api,params,response)
     logging.debug ('###### TRYING TO INSERT INTO DB API V2 CACHE')
-    response, success = queryDB(sql,values,True,mydb)
+    logging.debug ('###### INSERTING IN DB')
+    newresponse, success = queryDB(sql,val,True,mydb,False)
+    logging.debug ('###### RETURNED FROM INSERTING IN DB')
     if success:
-        if response['jeu']:
-            insertGameInLocalDb(response['jeu'])
+        try:
+            logging.debug ('###### WILL SEE IF IT IS PROPER JSON')
+            jres = ast.literal_eval(response)
+            logging.debug ('###### '+str(jres))
+        except Exception as e:
+            logging.error ('###### COULD NOT CONVERT ANSWER TO DICT IN UPDATE DBV2 CALL '+str(e))
+            jres = response
+        if isinstance(jres,dict):
+            if response in jres.keys():
+                insertGameInLocalDb(jres['response']['jeu'])
         else:
             logging.info ('###### THERE IS NO GAME IN THE RESPONSE ')
             return False
@@ -355,7 +367,6 @@ def updateInDBV2Call(api,params,response):
         return False
 
 def searchInDBV2Call(api,params):
-    global mydb
     ### Try to see if it is in cache
     result = ''
     logging.debug ('###### CONNECTING TO DB TO LOCATE CACHED RESULT FOR V2 CALL')
@@ -380,7 +391,7 @@ def parsePossibleErrors(response):
         'Error 403:' in response or 
         'Error 423:' in response or 
         'Error 429:' in response or 
-        'Error 426:' in response):
+        'Error 426:' in response ):
         logging.debug ('###### GOT A CALL ERROR '+str(response)) 
         response = 'FAILED'
     if 'Error 404:' in response:
@@ -389,6 +400,9 @@ def parsePossibleErrors(response):
     if 'Error 5' in response:
         logging.error ('###### THERE IS A SERVER ERROR '+str(response))
         response = 'FAILED'
+    if ('urlopen error timed out' in response.lower()):
+        logging.error ('###### THERE IS A MOMENTARY SERVER ERROR '+str(response))
+        response = 'RETRY'
     return response
 
 def getV2CallInfo(URL):
@@ -433,17 +447,28 @@ def doV2URLRequest(URL):
     while timeout:
         try:
             response = urllib2.urlopen(request,timeout=60).read()
-            timeout = False
-        except socket.timeout, e:
-            logging.error ('###### TIMEOUT ERROR - RETRYING')
+            ## TODO REMOVE
+            if response[0]=='<':
+                try:
+                    response = re.sub(r'<br\s\/>(\s|\S)*<br\s\/>','',response)
+                except Exception as e:
+                    logging.error ('###### CANNOT TREAT RESPONSE '+str(e))
+            response = parsePossibleErrors(response)
+            if response != 'RETRY':
+                timeout = False
+            else:
+                logging.error ('###### TIMED OUT - WILL RETRY')
         except Exception as e:
             logging.error ('###### OTHER ERROR IN CALLING URL '+str(e))
             response = str(e)
-            timeout = False
+            response = parsePossibleErrors(response)
+            if response != 'RETRY':
+                timeout = False
+            else:
+                logging.error ('###### TIMED OUT - WILL RETRY')
     ### SOME OTHER ERROR HANDLING
     if 'Erreur : Impossible de se conne' in response:
         response = 'Error 500:' 
-    response = parsePossibleErrors(response)
     return response
 
 
@@ -451,7 +476,6 @@ def callAPIURL(URL):
     #### ACTUAL CALL TO THE API
     ## Check if it is a v2 Call first
     response=''
-    apiname =''
     logging.debug ('####### GOING TO CALL URL '+URL)
     v2 = re.search('\/[a|A][P|p][i|I]2\/',URL)
     logging.debug('###### IS V2 '+str(v2))
@@ -462,9 +486,6 @@ def callAPIURL(URL):
         return 'ERROR'
     if response != '':
         return response
-    #### TODO: REMOVE THIS LINE
-    else:
-        return 'NOT FOUND'
     logging.debug ('###### THERE WAS NO RESPONSE FROM DB SO I MIGHT AS WELL CALL THE API')
     successCall = False
     while not successCall:
@@ -473,12 +494,14 @@ def callAPIURL(URL):
         ### WE TRY CALLING WITH ACCOUNT
         ### -------------------------------------------------
         ### CONVERT URL TO ANON AND CALL IT
+        logging.debug (URL)
         anonURL = re.sub(r'&ssid=\w*','&ssid=',URL)
         logging.debug ('###### CALLING AS ANON')
         response = doV2URLRequest(anonURL)
+        logging.debug ('###### AFTER I HAVE CALLED THE DB TO SEARCH FOR A CACHED CALL')
         if response == 'FAILED' or response == 'QUOTA':
             logging.debug ('###### FAILED TO CALL AS ANON, WILL RETRY AS IDENTIFIED')
-            sleep (180)
+            logging.debug (URL)
             response = doV2URLRequest(URL)
         if response != 'FAILED' and response != 'QUOTA':
             successCall = True
@@ -488,24 +511,33 @@ def callAPIURL(URL):
             logging.debug ('###### WE GOT QUOTA ERROR FOR ANON AND IDENTIFIED - WE CANNOT CONTINUE - WAIT 10 MINS TO RETRY')
             sleep (180)
         if response == 'NOT FOUND':
-            logging.debug ('###### ROM/GAME HAS NOT BE FOUND, RETURN THIS INFORMATION TO CALLER')
+            logging.debug ('###### ROM/GAME HAS NOT BEEN FOUND, RETURN THIS INFORMATION TO CALLER')
             successCall = True
         if response == 'FAILED':
             logging.debug ('###### FAILED TO CALL AS IDENTIFIED WILL RETRY AS ANON')
             sleep (180)
 
     logging.debug ('###### AN ACCEPTABLE ANSWER WAS FOUND, GOING TO PROCESS IT')
+    newresponse = response
     try:
+        ### SEE IF IT IS A PROPER JSON OR NOT
+        logging.debug ('###### GOING TO CHECK IF IT IS A REAL JSON')
         retJson = json.loads(response)
-    except:
-        logging.debug ('###### THE RETURN JSON WHEN CALLED API IS NOT VALID, WILL TRY TO FIX')
-        err = response.rfind ('],')
-        new_response = response[:err] + "]" + response[err+2:]
-        response = new_response
-    if v2 and apiname !='' and response!='':
+    except Exception as e:
+        if response !='NOT FOUND' and response!='QUOTA' and response!='FAILED':
+            logging.debug ('###### THE RETURN JSON WHEN CALLED API IS NOT VALID '+str(e)+', WILL TRY TO FIX')
+            err = response.rfind ('],')
+            logging.debug('###### BAD RESPONSE AT '+str(err)+' OF LENGTH '+str(len(response)-15))
+            if err > len(response)-15:
+                logging.debug ('###### HARD FIXING A SCREENSCRAPER BUG A STARY COMMA NEAR THE END AFTER A ]')
+                newresponse = response[:err] + "]" + response[err+2:]
+    logging.debug ('###### BEFORE CHECKING IF NEED TO UPDATE CACHE IN DB FOR V2')
+    if v2 and newresponse!='':
         logging.debug ('###### GOING TO UPDATE CACHE IN DB FOR V2')
         apiname,dbparams = getV2CallInfo(URL)
-        updateInDBV2Call(apiname,dbparams,response)
+        updateInDBV2Call(apiname,dbparams,newresponse)
+    else:
+        logging.debug ('###### THIS IS NOT A V2 CALL ???? '+str(v2))
     return response
 
 def isMissing(json,file):
@@ -850,7 +882,8 @@ def callAPI(URL, API, PARAMS, CURRSSID,Version='',tolog=''):
         except:
             logging.debug ('###### THE RETURN JSON IS NOT VALID, WILL TRY TO FIX')
             err = response.rfind ('],')
-            if err > len(response)-20:
+            logging.debug('###### BAD RESPONSE AT '+str(err)+' OF LENGTH '+str(len(response)-15))
+            if err > len(response)-15:
                 logging.debug ('###### HARD FIXING A SCREENSCRAPER BUG A STARY COMMA NEAR THE END AFTER A ]')
                 result = response[:err] + "]" + response[err+2:]
             if '#jsonrominfo' in result:
@@ -858,7 +891,11 @@ def callAPI(URL, API, PARAMS, CURRSSID,Version='',tolog=''):
                 result = result.replace('#jsonrominfo','')
                 logging.debug ('###### '+str(result))
             new_response = result.replace('\x0d\x0a','\\r\\n').replace('\x0a','').replace('\x09','').replace('\x0b','').replace('  ','').replace('\r','')
-            retJson = json.loads(new_response)
+            try:
+                retJson = json.loads(new_response)
+            except Exception as e:
+                logging.error ('####### '+str(new_response))
+                sys.exit()
     else:
         logging.error ('###### CHECK RESPONSE '+str(response))
         return 'ERROR'
@@ -2894,7 +2931,7 @@ def updateFile(path,localSHA,localCRC,localMD):
 
 def lookUpROMinDB (romsha1,romcrc,rommd5):
     ### LOOKUP ROM IN DB FIRST
-    sqlst = 'select gameid from gameRoms gr where romsha1 = "'+romsha1+'" or romcrc = "'+romcrc+'" or rommd5 ="'+rommd5+'"'
+    sqlst = 'SELECT gameid from gameRoms gr where romsha1 = "'+romsha1+'" or romcrc = "'+romcrc+'" or rommd5 ="'+rommd5+'"'
     result,success = queryDB(sqlst,(),False,mydb)
     logging.debug ('###### RESULT FROM DB QUERY LOOKUP ROM '+str(result))
     return result
@@ -3316,7 +3353,7 @@ if migrateDB:
     currssid = 0
     gameid = int(startid)
     params =dict(fixParams)
-    numGames = 214000 #276000
+    numGames = 215000 #215000
     response = 'QUOTA'
     #### THis game with id Zero is going to be used to handle unknown roms
     zeroGame={'id':'0'}
@@ -3325,6 +3362,7 @@ if migrateDB:
     while gameid <= numGames:
         while response == 'QUOTA' or response == 'ERROR':
             params['gameid'] = str(gameid)
+            params['ssid']=config.ssid[currssid]
             response = callAPI(fixedURL,'jeuInfos',params,currssid,'2','MIGRATE DB ')
             if response == 'QUOTA':
                 logging.debug ('###### QUOTA IS OVER, WAITING UNTIL NEXT DAY')
@@ -3334,7 +3372,11 @@ if migrateDB:
         logging.debug ('####### RESPONSE FROM API CALL ')###+str(response))
         if response != 'ERROR' and response != 'NOT FOUND':
             logging.debug ('###### GOING TO INSERT GAMEID '+str(gameid)+' IN DB')
-            insertGameInLocalDb(response['jeu'])
+            sql = 'SELECT id from games where id = %s'
+            val = (gameid,)
+            exists,success = queryDB(sql,val,False,mydb)
+            if str(exists) != str(gameid):
+                insertGameInLocalDb(response['jeu'])
         if cnt == 50:
 	        mydb.commit()
 	        cnt = 0

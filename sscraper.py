@@ -106,7 +106,7 @@ def initiateDBConnect():
 
 mydb = initiateDBConnect()
 
-fixedURL = "https://clone.screenscraper.fr/api"
+fixedURL = "https://www.screenscraper.fr/api"
 
 testAPI = "ssuserInfos"
 
@@ -1807,14 +1807,6 @@ def findMissingGame(gameName,systemid):
            WHERE gs.`system` in (SELECT sys.id FROM systems sys WHERE sys.parent =\
            (SELECT sys1.parent FROM systems sys1 WHERE sys1.id = %s))\
            AND ((gn.`text` LIKE %s) or (gr.romfilename LIKE %s))"
-    '''
-    sql = "SELECT games.id AS GameID, games.system AS SystemID, gn.text AS gameName , gr.romfilename AS Rom\n\
-           FROM gameNames gn\n\
-           LEFT JOIN games ON games.id=gn.gameid\n\
-           LEFT JOIN gameRoms gr ON gr.gameid=gn.gameid\n\
-           WHERE gn.gameid IN (SELECT DISTINCT gr.gameid FROM gameRoms gr WHERE romfilename LIKE %s or gn.text LIKE %s)\
-           AND systemid in (select id from systems where parent = (select parent from systems where id = %s))"
-    '''
     val = (systemid,qName,qName)
     srchName = gameName[:gameName.rindex('.')]
     results,success = queryDB(sql,val,False,mydb,True)
@@ -2465,9 +2457,11 @@ def gameNameMatches(orig,chkname):
     ## Convert non ascii codes to normal codes
     ##for chk in chkname['noms']:
     ###### Remove parentehsis and first space
-    rmname = re.sub(r'\s\(.*\)','',chkname)
-    ckname = re.sub(r'\s\(.*\)','',orig)
-    ckname = ckname.replace('_',' ')
+    kname = orig.replace('_',' ')
+    rmname = re.sub(r'\s?\(.*\)','',chkname)
+    cname = re.sub(r'\s?\(.*\)','',kname)
+    dname = re.sub(r'\s?\[.*\]','',cname)
+    ckname = re.sub(r'\s[V|v]\d*.\d*','',dname)
     if '.' in rmname:
         rmname=rmname[:rmname.rindex('.')]
     if rmname.upper() == ckname.upper():

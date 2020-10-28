@@ -471,6 +471,18 @@ def doV2URLRequest(URL):
         response = 'Error 500:' 
     return response
 
+def callURL(URL):
+    logging.debug ('###### CALLING URL '+URL)
+    request = urllib2.Request(URL)
+    response = ''
+    try:
+        logging.debug ('###### ATCUAL CALL')
+        response = urllib2.urlopen(request,timeout=60).read()
+        logging.debug ('###### GOT A RESPONSE')
+        return response
+    except Exception as e:
+        logging.error ('###### COULD NOT CALL URL '+str(URL)+' - Error '+str(e))
+        return ''
 
 def callAPIURL(URL):
     #### ACTUAL CALL TO THE API
@@ -1817,7 +1829,7 @@ def findMissingGame(gameName,systemid):
             logging.debug ('###### I FOUND SEVERAL CANDIDATES')
             for result in results:
                 logging.debug ('###### COMPARING WITH '+result[2]+' AND '+result[3])
-                if gameNameMatches(srchName,result[2]) or gameNameMatches(srchName,result[3]):
+                if gameNameMatches(srchName,result[2],systemid) or gameNameMatches(srchName,result[3],systemid):
                     logging.debug('###### THERE IS A MATCH!!!')
                     gameId = result[0]
                     break
@@ -1881,9 +1893,18 @@ def locateShainDB(mysha1='None',mymd5='None',mycrc='None',filename='',sysid=0):
         logging.debug ('###### GOT A RESULT AND I\'M RETURNING IT')
         return myres
     else:
-        ######## THIS NEEDS TO BE CHANGED BY LOCATEGAMEIN ROMNAMES
         gameID = findMissingGame(filename,sysid)
         logging.debug ('###### GAMEID RETURNED IS '+str(gameID))
+        if gameID == 0:
+            logging.debug('###### CHECKING IF IT IS AN ARCADE GAME AND CHECK BY REAL NAME JUST IN CASE')
+            if isArcadeSystem(sysid):
+                logging.error ('###### GOING TO GRAB ARCADE NAME')
+                arcadename = getArcadeName(filename)
+                logging.error ('###### GRABBED NAME IS ['+arcadename+']')
+                sys.exit()
+                if arcadename != '':
+                    logging.error ('###### GOING TO LOOK '+arcadename+' UP')
+                    gameID = findMissingGame(arcadename,sysid)
         if gameID is not None:
             try:
                 myRom = {'romfilename':filename,'romsha1':mysha1.upper(),'romcrc':mycrc.upper(),'rommd5':mymd5.upper(),'beta':'0','demo':'0','proto':'0','trad':'0','hack':'0','unl':'0','alt':'0','best':'0','netplay':'0'}
@@ -2453,15 +2474,31 @@ def fuzzyMatch (a,b):
 
 ################### PARENT IDS OF SYSTEMS TO CHECK
 
-def gameNameMatches(orig,chkname):
+def gameNameMatches(orig,chkname,sys):
     ## Convert non ascii codes to normal codes
     ##for chk in chkname['noms']:
     ###### Remove parentehsis and first space
+    if orig.upper() == chkname.upper():
+        logging.error ('///////'+chkname+'//////'+orig)
+        return True
     kname = orig.replace('_',' ')
+    if kname.upper() == chkname.upper():
+        logging.error ('///////'+kname+'//////'+orig)
+        return True
+    if '.' in chkname:
+        unext = chkname[:chkname.rindex('.')]
+        if orig.upper() == unext.upper():
+            logging.error ('///////'+chkname+'//////'+unext)
+            return True
+        kname = orig.replace('_',' ')
+        if kname.upper() == unext.upper():
+            logging.error ('///////'+kname+'//////'+unext)
+            return True
     rmname = re.sub(r'\s?\(.*\)','',chkname)
     cname = re.sub(r'\s?\(.*\)','',kname)
     dname = re.sub(r'\s?\[.*\]','',cname)
-    ckname = re.sub(r'\s[V|v]\d*.\d*','',dname)
+    qname = re.sub(r'\s[V|v]\d*.\d*','',dname)
+    ckname = re.sub(r'(?<!^)(?=[A-Z])', ' ', qname).replace('  ',' ')
     if '.' in rmname:
         rmname=rmname[:rmname.rindex('.')]
     if rmname.upper() == ckname.upper():
@@ -2539,7 +2576,6 @@ def gameNameMatches(orig,chkname):
         if chkNamesMatch(chk.upper(),splitnum.upper()+' THE'):
             logging.info ('###### NAME MATCHES')
             return True
-
     logging.info ('###### THERE IS NO MATCH')
     return False
 
@@ -2558,19 +2594,19 @@ def getArcadeName(name):
     callURL2 = 'http://mamedb.blu-ferret.co.uk/game/'+name+'/'
     callURL3 = 'http://adb.arcadeitalia.net/dettaglio_mame.php?game_name=' + name
     logging.info ('###### GETTING ARCADE NAME IN URL '+callURL)
-    namefromcsv = nameFromArcadeCSV(name)
-    if namefromcsv != '':
-        return namefromcsv
+    #namefromcsv = nameFromArcadeCSV(name)
+    #if namefromcsv != '':
+    #    return namefromcsv
     try:
-        response = callAPIURL(callURL) 
+        response = callURL(callURL) 
         gamename = re.findall("<title>(.*?)<\/title>", response)[0].replace('Game Details:  ','').replace(' - mamedb.com','')
         logging.info ('###### FOUND GAME IN MAMEDB '+gamename)
         return gamename
     except:
-        logging.error('###### COULD NOT GET ARCADE NAME FROM MAMEDB')
+        logging.error('###### COULD NOT GET ARCADE NAME FROM MAMEDB ')
         logging.info('###### TRYING WITH BLU FERRET IN URL '+callURL2)
         try:
-            response = callAPIURL(callURL2) 
+            response = callURL(callURL2) 
             gamename = re.findall("\<title\>Game Details:  (\w*).*\<\/title\>", response[0])
             logging.info ('###### FOUND GAME IN BLU FERRET '+gamename)
             return gamename
@@ -2578,7 +2614,7 @@ def getArcadeName(name):
             logging.error ('###### COULD NOT GET NAME FROM BLU FERRET')
             logging.info('###### TRYING WITH ARCADE ITALIA IN URL '+callURL3)
             try:
-                response = callAPIURL(callURL3) 
+                response = callURL(callURL3) 
                 gamename = re.findall("<title>(.*?)<\/title>", response)[0].replace(' - MAME machine','').replace(' - MAME software','')
                 gamename = gamename.replace(' - MAME machin...','')
                 if gamename.upper()=='ARCADE DATABASE':
@@ -2744,7 +2780,7 @@ def findMissing():
                                     logging.debug ('###### TRYING WITH GAME IN POSITION ['+str(position)+'] OF ['+str(len(returnValue['jeux']))+']')
                                     thisGameID = returnValue['jeux'][position]['id']
                                     
-                                    if gameNameMatches(myGameName,game):
+                                    if gameNameMatches(myGameName,game,system):
                                         if isSystemOk(game['systeme']['id'],str(system)):
                                             updateGameID (row[1],sha,thisGameID)
                                             found = True
@@ -2764,7 +2800,7 @@ def findMissing():
                                 if str(returnValue['jeux'][0]) != '{}':
                                     game = returnValue['jeux'][0]
                                     thisGameID = returnValue['jeux'][0]['id']
-                                    if gameNameMatches(myGameName,game):
+                                    if gameNameMatches(myGameName,game,system):
                                         if isSystemOk(game['systeme']['id'],str(system)):
                                             updateGameID (row[1],sha,thisGameID)
                                             found = True

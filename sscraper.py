@@ -1888,7 +1888,6 @@ def locateShainDB(mysha1='None',mymd5='None',mycrc='None',filename='',sysid=0):
                 myres = ast.literal_eval(result)
             except Exception as e:
                 logging.error ('###### CANNOT CONVERT VIA AST '+str(e)+' RETURNING NOTHING '+str(result))
-                sys.exit()
                 return ''
         logging.debug ('###### GOT A RESULT AND I\'M RETURNING IT')
         return myres
@@ -1901,7 +1900,6 @@ def locateShainDB(mysha1='None',mymd5='None',mycrc='None',filename='',sysid=0):
                 logging.error ('###### GOING TO GRAB ARCADE NAME')
                 arcadename = getArcadeName(filename)
                 logging.error ('###### GRABBED NAME IS ['+arcadename+']')
-                sys.exit()
                 if arcadename != '':
                     logging.error ('###### GOING TO LOOK '+arcadename+' UP')
                     gameID = findMissingGame(arcadename,sysid)

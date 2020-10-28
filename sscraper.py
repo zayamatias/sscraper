@@ -2185,6 +2185,27 @@ def getSystemForRom(rom,sysid):
     else:
         return getSystemName(0)
 
+def myFileCopy(origin,destination):
+    logging.debug ('###### GOING TO TRY TO COPY '+origin+' INTO '+destination)
+    if (not os.path.isfile(origin)):
+        logging.info ('###### ORIGIN FILE '+origin+' DOES NOT EXIST')
+        return False
+    if (not os.path.isfile(destination)):
+        logging.debug ('###### DESTINATION FILE DOES NOT EXISTS, GOING TO COPY')
+        try:
+            logging.debug ('###### TRYING TO COPY FILE')
+            copyfile(origin,destination)
+            logging.debug ('###### COPY DONE')
+        except Exception as e:
+            logging.error ('###### ERROR COPYING FILE '+str(e))
+    else:
+        if (os.stat(origin).st_size != os.stat(destination).st_size):
+            logging.debug ('###### DESTINATION FILE EXISTS BUT SIZE DIFFERS, GOING TO COPY')
+            copyfile(origin,destination)
+        else:
+            logging.info ('###### FILE '+destination+' ALREADY EXISTS')
+    return False
+
 def copyRoms (systemid,systemname,path,CURRSSID,extensions,outdir):
     ### COPY ROMS FOR SYSTEM ID IN PATH TO OUTDIR WITH NEW PATH AS SYSTEM WHERE THE ROM BELONGS TO
     commcount = 0
@@ -2254,46 +2275,20 @@ def copyRoms (systemid,systemname,path,CURRSSID,extensions,outdir):
                     os.mkdir(destimgpath)
                 except Exception as e:
                     logging.error ('###### COULD NOT CREATE DIRECTORY '+str(e))
-            if (not os.path.isfile(destfile)):
-                logging.debug ('###### DESTINATION FILE DOES NOT EXISTS, GOING TO COPY')
-                try:
-                    logging.debug ('###### TRYING')
-                    copyfile(origfile,destfile)
-                except Exception as e:
-                    logging.error ('###### ERROR COPYING FILE '+str(e))
-            else:
-                if (os.stat(origfile).st_size != os.stat(destfile).st_size):
-                    logging.debug ('###### DESTINATION FILE EXISTS BUT SIZE DIFFERS, GOING TO COPY')
-                    copyfile(origfile,destfile)
-                else:
-                    logging.info ('###### FILE '+destfile+' ALREADY EXISTS')
+            logging.debug ('###### GOING TO COPY ROM ')
+            myFileCopy(origfile,destfile)
             thisfile = path+videoofile
             thisdfile = destpath+videofile
-            if os.path.isfile(thisfile):
-                logging.debug ('###### GOING TO COPY VIDEO '+thisfile+' TO '+thisdfile)
-                try:
-                    logging.debug ('###### TRYING ')
-                    copyfile(thisfile,thisdfile)
-                except Exception as e:
-                    logging.error ('###### COULD NOT COPY VIDEO '+str(e))
+            logging.debug ('###### GOING TO COPY VIDEO ')
+            myFileCopy(thisfile,thisdfile)
             thisfile = path+imageofile
             thisdfile = destpath+imagefile
-            if os.path.isfile(thisfile):
-                logging.debug ('###### GOING TO COPY IMAGE '+thisfile+' TO '+thisdfile)
-                try:
-                    logging.debug ('###### TRYING')
-                    copyfile(thisfile,thisdfile)
-                except Exception as e:
-                    logging.error ('####### COULD NOT COPY IMAGE '+str(e))
+            logging.debug ('###### GOING TO COPY IMAGE ')
+            myFileCopy(thisfile,thisdfile)
             thisfile = path+bezelfile
             thisdfile = destpath+bezelfile
-            if os.path.isfile(thisfile):
-                logging.debug ('###### GOING TO COPY BEZEL CONFIG '+thisfile+' TO '+thisdfile)
-                try:
-                    logging.debug ('###### TRYING')
-                    copyfile(thisfile,thisdfile)
-                except Exception as e:
-                    logging.error ('###### COULD NOT COPY BEZEL '+str(e))
+            logging.debug ('###### GOING TO COPY BEZEL ')
+            myFileCopy(thisfile,thisdfile)
         else:
             logging.error ('###### FAILED TO COPY ROM '+origfile+' TO DESTINATION')
         logging.error ('-+-+-+-+-+-+ FINISHED COPYING '+str(file)+' -+-+-+-+-+-+ ')

@@ -1716,7 +1716,6 @@ def getRomFiles(path,acceptedExtens):
         ### GET THE LIST OF FILES THAT COMPLY WITH THE ACCEPTED EXTENSIONS (PLUS ZIP, REMEMBER)
         logging.info ('###### FOUND '+str(len(filelist))+' FILES WITH EXTENSIONS '+str(acceptedExtens))
         logging.info ('###### '+str(filelist))
-        sys.exit()
     except Exception as e:
         ### FOR SOME REASON SOMETHING WENT WRONG WHEN SEARCHING FOR FILES SO LET EVERYONE KNOW`
         logging.error('###### THERE ARE NO FILES IN DIRECTORY ' + path + str(e))

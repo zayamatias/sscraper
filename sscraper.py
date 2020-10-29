@@ -77,9 +77,9 @@ except:
 UPDATEDATA = update
 
 try:
-    logging.basicConfig(filename='sv2log.txt', filemode='a',
+    logging.basicConfig(filename='sv3log.txt', filemode='a',
                         format='%(asctime)s - %(process)d - %(name)s - %(levelname)s - %(message)s',
-                        level=logging.ERROR)
+                        level=logging.DEBUG)
     logging.debug("Logging service started")
 except Exception as e:
     logging.debug('error al crear log '+str(e))
@@ -1586,20 +1586,9 @@ def processZip(path,zipfile,CURRSSID,extensions,sysid):
 
 def processDir(dir,path,CURRSSID,extensions,sysid):
     logging.info ('###### STARTING DIRECTORY PROCESS')
-    logging.debug ('##### CHANGING DIRECTORY TO '+path+'/'+dir)
-    try:
-        os.chdir(path+'/'+dir)
-    except Exception as e:
-        logging.error('###### COULD NOT CHANGE TO DIRECTORY '+path+'/'+dir+' PLEASE VERIFY')
-        return None
-   
-    filelist = []
-    filelist.extend(sorted(glob.glob('*.*')))
-    for file in filelist:
-        extens = file[file.rindex('.'):]
-        if extens not in extensions:
-            filelist.remove(file)
-    logging.info ('###### FOUND '+str(len(filelist))+' FILES WITH EXTENSIONS '+str(extensions))
+    chkpath = path+'/'+dir
+    logging.debug ('##### CHANGING DIRECTORY TO '+chkpath)
+    filelist = getRomFiles(chkpath,extensions)
     gameinfo = None
     for file in filelist:
         procfile = file
@@ -1709,13 +1698,25 @@ def getRomFiles(path,acceptedExtens):
         ### CREATE SEARCH EXPRESSION FOR FILES, BASED ON EXTENSIONS, AGAIN ZIP IS ADDED BY DEFAULT, IN TIS CASE TO FACILITATE ITERATION
         filelist = []
         filelist.extend(sorted(glob.glob('*.*')))
-        for file in filelist:
-            extens = file[file.rindex('.'):]
+        iterlist = list(filelist)
+        logging.info ('###### FOUND '+str(len(filelist))+' IN PATH, WILL VERIFY FOR EXTENSIONS')
+        for myfile in iterlist:
+            try:
+                extens = myfile[myfile.rindex('.'):]
+            except Exception as e:
+                logging.error ('###### SEEMS THIS FILE '+myfile+' HAS NO EXTENSIONS, I REMOVE IT ['+str(e)+']')
+                filelist.remove(myfile)
+            logging.debug('###### FOR FILE '+myfile+' EXTENSION IS '+extens)
             if extens not in acceptedExtens:
-                logging.error ('###### REMOVED '+file+' FROM COPY LIST')
-                filelist.remove(file)
+                logging.info ('###### REMOVED '+myfile+' FROM COPY LIST')
+                try:
+                    filelist.remove(myfile)
+                except Exception as e:
+                    logging.error ('###### COULD NOT REMOVE '+myfile+' FROM LIST')
         ### GET THE LIST OF FILES THAT COMPLY WITH THE ACCEPTED EXTENSIONS (PLUS ZIP, REMEMBER)
         logging.info ('###### FOUND '+str(len(filelist))+' FILES WITH EXTENSIONS '+str(acceptedExtens))
+        logging.info ('###### '+str(filelist))
+        sys.exit()
     except Exception as e:
         ### FOR SOME REASON SOMETHING WENT WRONG WHEN SEARCHING FOR FILES SO LET EVERYONE KNOW`
         logging.error('###### THERE ARE NO FILES IN DIRECTORY ' + path + str(e))
@@ -1896,12 +1897,6 @@ def locateShainDB(mysha1='None',mymd5='None',mycrc='None',filename='',sysid=0):
         ###### NEED TO vREPLACE EOL CHARACRTES WITH DOUBLE BACKSLASH ESCAPED EQUIVALENT FOR DICT CONVERSION TO WORK
         result = result.replace('\x0d\x0a','\\r\\n').replace('\x0a','').replace('\x09','').replace('\x0b','').replace('  ','').replace('\r','')
         logging.debug ('###### WE DID FIND SOMETHING '+repr(result))
-        '''try:
-            logging.debug ('##### ENCODING RESULT')
-            result = result.encode('utf-8','replace')
-        except Exception as e:
-            logging.error ('###### CONVERTING BEFORE JSON --- CANNOT ENCODE '+str(e))
-        '''
         try:
             logging.debug ('###### CONVERTING VIA JSON')
             myres = json.loads(result)
@@ -2361,7 +2356,7 @@ def scrapeRoms(CURRSSID,sortRoms=False,outdir=''):
                             ### IF WE CANNOT GET A LIST OF EXTENSIONS FOR A SYSTEM WE DEFAULT TO 'ZIP'
                             extensions = ['zip']
                     if system.tag == 'ssname':
-                        logging.error(str(system))### CHECK FOR EXTENSION TAG, THAT HOLDS THE LIST OF VALIDD EXTENSIONS FOR THE SYSTEM
+                        ### CHECK FOR EXTENSION TAG, THAT HOLDS THE LIST OF VALIDD EXTENSIONS FOR THE SYSTEM
                         ### THIS IS A SPECIAL TAG, IT HAS THE SYSTEM NAME AS DEFINED IN THE SCRAPING SITE, THIS IS TO MATCH AND GET SYSTEM ID
                         try:
                             sysname = system.text.upper()
@@ -2374,12 +2369,12 @@ def scrapeRoms(CURRSSID,sortRoms=False,outdir=''):
                         for mysystem in systems:
                             ### API RETRUS SOMETIMES MORE THAN ONE SYSTEM NAME SO WE NEED TO ITERATE THROUGH ALL OF THEM
                             for apisysname in mysystem['noms']:
-                                logging.error ('###### COMPARIMG '+sysname.upper()+' WITH '+mysystem['noms'][apisysname].upper())
+                                logging.info ('###### COMPARING '+sysname.upper()+' WITH '+mysystem['noms'][apisysname].upper())
                                 if sysname.upper()==mysystem['noms'][apisysname].upper():
                                     ### WE FOUND A MATCH SO WE ASSIGN A SYSTEM ID
                                     systemid = str(mysystem['id'])
                                     systemname = mysystem['noms']
-                                    logging.error ('###### FOUND ID '+systemid+' FOR SYSTEM '+sysname)
+                                    logging.info ('###### FOUND ID '+systemid+' FOR SYSTEM '+sysname)
                                     foundsys = True
                                     ### AND WE SKIP
                                     break

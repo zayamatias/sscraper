@@ -1,5 +1,5 @@
 lhafile==0.2.2
-mysql-connector==2.2.9
+pymysql==0.10.1
 numpy==1.16.6
 olefile==0.46
 Pillow==6.2.2

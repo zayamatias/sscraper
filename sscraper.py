@@ -22,7 +22,7 @@ from unidecode import unidecode
 import unicodedata
 from xml.dom import minidom
 from multiprocessing import Pool
-import mysql.connector
+import pymysql as mysql
 from PIL import Image
 from threading import Thread
 from datetime import datetime, time
@@ -91,7 +91,7 @@ tmpdir = config.tmpdir
 
 def initiateDBConnect():
     try:
-        thisdb = mysql.connector.connect(
+        thisdb = mysql.connect(
         host=config.dbhost,
         user=config.dbuser,
         passwd=config.dbpasswd,
@@ -104,6 +104,7 @@ def initiateDBConnect():
         print (str(e))
         sys.exit()
 
+global mydb
 mydb = initiateDBConnect()
 
 fixedURL = "https://www.screenscraper.fr/api"
@@ -220,7 +221,7 @@ class Game:
         else:
             return None
 
-def queryDB(sql,values,directCommit,thisDB,logerror=False):
+def queryDB(sql,values,directCommit,thisDB,logerror=False,retfull=False):
     logging.debug ('+++++++ '+sql)
     mycursor = getDBCursor(thisDB)
     if mycursor:
@@ -244,7 +245,10 @@ def queryDB(sql,values,directCommit,thisDB,logerror=False):
                 else:
                     if mycursor.rowcount == 1:
                         logging.debug ('###### COULD FIND ONE RESULT '+str(myresult[0]))
-                        return myresult[0][0],True
+                        if not retfull:
+                            return myresult[0][0],True
+                        else:
+                            return myresult[0],True
                     else:
                         logging.debug ('###### FOUND SEVERAL RESULTS')
                         return myresult,True
@@ -273,20 +277,22 @@ def queryDB(sql,values,directCommit,thisDB,logerror=False):
 
 
 def getDBCursor(theDB):
+    global mydb
     connected = False
     while not connected:
         logging.debug ('###### TRYING TO CONNECT')
         try:
-            thiscursor = theDB.cursor(buffered=True)
+            thiscursor = theDB.cursor()
             connected = True
             logging.debug ('###### CONNECTED SUCCESFULLY')
         except Exception as e:
             logging.error ('###### CANNOT CONNECT TO DB - '+str(e))
             logging.error ('###### WAITING AND RETRYING')
             try:
-                mydb.close()
+                theDB.close()
                 sleep(60)
                 mydb = initiateDBConnect()
+                thiscursor = mydb.cursor()
             except Exception as e:
                 logging.error ('###### CANNOT RECONNECT TO DB '+str(e))
     return thiscursor
@@ -338,7 +344,7 @@ def updateInDBV2Call(api,params,response):
     ### Update the DB with the call to V2
     if response == 'ERROR' or response =='QUOTA':
         ### Gameid=1 is added to the non caching criteria to avoid being there when quota is over and checking 
-        logging.error ('###### GOT AN ERROR FROM API CALL SO NOT UPDATING V2 DB '+response)
+        logging.info ('###### GOT AN ERROR FROM API CALL SO NOT UPDATING V2 DB '+response)
         return False
     result = ''
     logging.debug ('###### CONNECTING TO DB TO UPDATE CACHED RESULT FOR V2 CALL')
@@ -363,7 +369,7 @@ def updateInDBV2Call(api,params,response):
             logging.info ('###### THERE IS NO GAME IN THE RESPONSE ')
             return False
     else:
-        logging.error ('###### COULD NOT INSERT INTO DB V2 API CACHE')
+        logging.info ('###### COULD NOT INSERT INTO DB V2 API CACHE')
         return False
 
 def searchInDBV2Call(api,params):
@@ -1812,7 +1818,15 @@ def arcadeSystemsList():
 
 def findMissingGame(gameName,systemid):
     logging.debug('###### WILL TRY TO FIND GAMES '+gameName+' FOR SYSTEM '+str(systemid))
+    srchName = gameName[:gameName.rindex('.')]
     qName =gameName[0]+'%'
+    if len(srchName)>1:
+        qName =gameName[0:1]+'%'
+    if len(srchName)>2:
+        qName =gameName[0:2]+'%'
+    if len(srchName)>3:
+        qName =gameName[0:3]+'%'
+    logging.debug ('###### SEARCHING '+qName)
     sql = "SELECT gs.id as gameID, `system`, COALESCE (gn.`text`,'----') as gameName, COALESCE (gr.romfilename,'----') as romName FROM games gs\
            LEFT JOIN gameNames gn ON gn.gameid = gs.id\
            LEFT JOIN gameRoms gr on gr.gameid = gs.id\
@@ -1820,8 +1834,7 @@ def findMissingGame(gameName,systemid):
            (SELECT sys1.parent FROM systems sys1 WHERE sys1.id = %s))\
            AND ((gn.`text` LIKE %s) or (gr.romfilename LIKE %s))"
     val = (systemid,qName,qName)
-    srchName = gameName[:gameName.rindex('.')]
-    results,success = queryDB(sql,val,False,mydb,True)
+    results,success = queryDB(sql,val,False,mydb,True,True)
     gameId = 0
     if results:
         logging.debug('###### THERE ARE RESULTS, WILL TRY TO MATCH WITH '+srchName)
@@ -1838,7 +1851,7 @@ def findMissingGame(gameName,systemid):
         else:
             logging.debug ('###### I FOUND ONE CANDIDATE')
             logging.debug('###### '+str(results))
-            if srchName == results[2] or srchName==results[3]:
+            if gameNameMatches(srchName,results[2],systemid) or gameNameMatches(srchName,results[3],systemid):
                 gameId = results[0]
                 logging.debug ('####### FOUND IT!! '+str(results))
     else:
@@ -1874,16 +1887,17 @@ def locateShainDB(mysha1='None',mymd5='None',mycrc='None',filename='',sysid=0):
         ###### NEED TO vREPLACE EOL CHARACRTES WITH DOUBLE BACKSLASH ESCAPED EQUIVALENT FOR DICT CONVERSION TO WORK
         result = result.replace('\x0d\x0a','\\r\\n').replace('\x0a','').replace('\x09','').replace('\x0b','').replace('  ','').replace('\r','')
         logging.debug ('###### WE DID FIND SOMETHING '+repr(result))
-        try:
+        '''try:
             logging.debug ('##### ENCODING RESULT')
             result = result.encode('utf-8','replace')
         except Exception as e:
-            logging.error ('###### CANNOT ENCODE '+str(e))
+            logging.error ('###### CONVERTING BEFORE JSON --- CANNOT ENCODE '+str(e))
+        '''
         try:
             logging.debug ('###### CONVERTING VIA JSON')
             myres = json.loads(result)
         except Exception as e:
-            logging.debug ('###### CONVERTING VIA AST '+str(e))
+            logging.error ('###### CANNOT CONVERT VIA JSON - CONVERTING VIA AST '+str(e))
             try:
                 myres = ast.literal_eval(result)
             except Exception as e:
@@ -2472,20 +2486,20 @@ def gameNameMatches(orig,chkname,sys):
     ##for chk in chkname['noms']:
     ###### Remove parentehsis and first space
     if orig.upper() == chkname.upper():
-        logging.error ('///////'+chkname+'//////'+orig)
+        logging.debug ('///////'+chkname+'//////'+orig)
         return True
     kname = orig.replace('_',' ')
     if kname.upper() == chkname.upper():
-        logging.error ('///////'+kname+'//////'+orig)
+        logging.debug ('///////'+kname+'//////'+orig)
         return True
     if '.' in chkname:
         unext = chkname[:chkname.rindex('.')]
         if orig.upper() == unext.upper():
-            logging.error ('///////'+chkname+'//////'+unext)
+            logging.debug ('///////'+chkname+'//////'+unext)
             return True
         kname = orig.replace('_',' ')
         if kname.upper() == unext.upper():
-            logging.error ('///////'+kname+'//////'+unext)
+            logging.debug ('///////'+kname+'//////'+unext)
             return True
     rmname = re.sub(r'\s?\(.*\)','',chkname)
     cname = re.sub(r'\s?\(.*\)','',kname)
@@ -2495,7 +2509,7 @@ def gameNameMatches(orig,chkname,sys):
     if '.' in rmname:
         rmname=rmname[:rmname.rindex('.')]
     if rmname.upper() == ckname.upper():
-        logging.error ('///////'+rmname+'//////'+orig)
+        logging.debug ('///////'+rmname+'//////'+orig)
         return True
     chk = chkname
     chk = chk.encode('ascii', 'ignore')

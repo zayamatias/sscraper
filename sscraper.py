@@ -238,19 +238,24 @@ def queryDB(sql,values,directCommit,thisDB,logerror=False,retfull=False):
                 except Exception as e:
                     logging.error ('###### COULD NOT EXECUTE SELECT QUERY '+str(e))
                     #logging.debug ('@@@@@@@@@@ '+str(mycursor.statement))
+                    mycursor.close()
                     return None,False
                 if mycursor.rowcount == 0:
                     logging.info ('###### COULD NOT FIND IN THE DB')
+                    mycursor.close()
                     return None,False
                 else:
                     if mycursor.rowcount == 1:
                         logging.debug ('###### COULD FIND ONE RESULT '+str(myresult[0]))
                         if not retfull:
+                            mycursor.close()
                             return myresult[0][0],True
                         else:
+                            mycursor.close()
                             return myresult[0],True
                     else:
                         logging.debug ('###### FOUND SEVERAL RESULTS')
+                        mycursor.close()
                         return myresult,True
             else:
                 logging.debug('####### IT IS NOT A SELECT QUERY')
@@ -260,16 +265,20 @@ def queryDB(sql,values,directCommit,thisDB,logerror=False,retfull=False):
                     if logerror:
                         logging.error ('@@@@@@@@@@ '+str(mycursor.statement))
                     #logging.debug ('@@@@@@@@@@ '+str(mycursor.statement))
+                    mycursor.close()
                 except Exception as e:
-                    logging.error ('###### COULD NOT EXECUTE QUERY '+str(e))
+                    logging.error ('###### INNER - COULD NOT EXECUTE QUERY '+str(e))
+                    logging.error ('###### SQL '+str(sql))
+                    logging.error ('###### VALUES '+str(values))
                     ###logging.error ('@@@@@@@@@@ '+str(mycursor.statement))
+                    mycursor.close()
                     return None,False
                 if directCommit and not migrateDB:
                     thisDB.commit()
-                    #logging.debug('####### AND I COMMITTED')
+                #logging.debug('####### AND I COMMITTED')
             return None,True
         except Exception as e:
-            logging.error ('###### COULD NOT EXECUTE QUERY '+str(e))    
+            logging.error ('###### OUTER - COULD NOT EXECUTE QUERY '+str(e))    
             return None,False
     else:
         logging.error ('###### COULD NOT CREATE CURSOR FOR DB')
@@ -2237,7 +2246,10 @@ def copyRoms (systemid,systemname,path,CURRSSID,extensions,outdir):
         logging.error ('-+-+-+-+-+-+ STARTING COPYING '+str(file)+' -+-+-+-+-+-+ ')
         commcount = commcount +1
         if commcount == 50:
-            mydb.commit()
+            try:
+                mydb.commit()
+            except Exception as e:
+                logging.error('###### COULD NOT COMMIT '+str(e))
             commcount = 0
         newsys = dict()
         origfile = path+file
@@ -3080,7 +3092,8 @@ def insertEditorInLocalDb(edid,edname):
         logging.info ('###### GOING TO UPDATE EDITORS TABLE')
         if len(edname) >  100:
 	    edname = edname[:99]
-        sqlst = 'INSERT INTO editors (id,text) values ('+str(edid)+',"'+edname+'")'
+        sqlst = 'INSERT INTO editors (id,text) values (%s,%s)'
+        values = (str(edid),edname)
         result,success = queryDB(sqlst,(),True,mydb)
         return success
 
@@ -3107,8 +3120,9 @@ def insertGameNamesInDB(id,names):
         result,success = queryDB(sql,(),True,mydb)
         logging.debug('###### GOT RESULT FROM NAMES CHECK '+str(result))
         if result == None or result == []:
-            sqlst = 'INSERT INTO gameNames (gameid,region,text) VALUES ('+str(id)+',"'+name['region']+'","'+name['text']+'")'
-            result,success = queryDB(sqlst,(),True,mydb)
+            sqlst = 'INSERT INTO gameNames (gameid,region,text) VALUES (%s,%s,%s)'
+            values = (str(id),name['region'],name['text'])
+            result,success = queryDB(sqlst,values,True,mydb)
 
 def insertSynopsisInDB(id,synopsis):
     try:
@@ -3130,8 +3144,9 @@ def insertSynopsisInDB(id,synopsis):
         result,success = queryDB(sql,(),False,mydb)
         logging.debug('###### GOT RESULT FROM SYNOPSIS CHECK '+str(result))
         if result == None or result == []:
-            sqlst = 'INSERT INTO gameSynopsis (gameid,langue,text) VALUES ('+str(id)+',"'+syn['langue']+'","'+syn['text']+'")'
-            result,success = queryDB(sqlst,(),True,mydb)
+            sqlst = 'INSERT INTO gameSynopsis (gameid,langue,text) VALUES (%s,%s,%s)'
+            values = (str(id),syn['langue'],syn['text'])
+            result,success = queryDB(sqlst,values,True,mydb)
 
 def insertGameRomsInDB(id,roms,sysid):
     logging.debug ('###### INSERTING ROMS IN DB '+str(roms))
@@ -3155,30 +3170,19 @@ def insertGameRomsInDB(id,roms,sysid):
         logging.debug('###### GOT RESULT FROM ROM CHECK '+str(result))
         if result is None or result == []:
             logging.debug ('####### THE ROM IS NOT IN THE DB')
-            sqlst = 'INSERT INTO gameRoms (romfilename,romsha1,romcrc,rommd5,beta,demo,proto,trad,hack,unl,alt,best,netplay,gameid,systemid) VALUES ('
-            sqlst = sqlst + '"' +rom['romfilename']+ '",'
+            sqlst = 'INSERT INTO gameRoms (romfilename,romsha1,romcrc,rommd5,beta,demo,proto,trad,hack,unl,alt,best,netplay,gameid,systemid)\
+                     VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)'
             if romsha1 == 'None':
                 romsha1 = ''
             if rommd5 == 'None':
                 rommd5 = ''
             if romcrc == 'None':
                 romcrc = ''
-            sqlst = sqlst + '"' +romsha1+ '",'
-            sqlst = sqlst + '"' +romcrc+ '",'
-            sqlst = sqlst + '"' +rommd5+ '",'
-            sqlst = sqlst + str(rom['beta'])+","
-            sqlst = sqlst + str(rom['demo'])+","
-            sqlst = sqlst + str(rom['proto'])+","
-            sqlst = sqlst + str(rom['trad'])+","
-            sqlst = sqlst + str(rom['hack'])+","
-            sqlst = sqlst + str(rom['unl'])+","
-            sqlst = sqlst + str(rom['alt'])+","
-            sqlst = sqlst + str(rom['best'])+","
-            sqlst = sqlst + str(rom['netplay'])+","
-            sqlst = sqlst + str(id)+","
-            sqlst = sqlst + str(sysid)+")"
+            values =(rom['romfilename'],romsha1,romcrc,rommd5,str(rom['beta']),str(rom['demo']),str(rom['proto']),\
+                     str(rom['trad']),str(rom['hack']),str(rom['unl']),str(rom['alt']),str(rom['best']),str(rom['netplay']),\
+                     str(id),str(sysid))
             logging.debug ('###### GOING TO EXECUTE SQL')
-            result,success = queryDB(sqlst,(),True,mydb)
+            result,success = queryDB(sqlst,values,True,mydb)
 
 def mediaConvertor(media,mediaList):
     for key in media.keys():
@@ -3225,14 +3229,9 @@ def insertGameMediasInDB(id,medias):
         result,success = queryDB(sql,(),True,mydb)
         logging.debug('###### GOT RESULT FROM MEDIAS CHECK '+str(result))
         if result == None or result == []:
-            sqlst = 'INSERT INTO gameMedias (type,url,region,format,cnt,gameid) VALUES ('
-            sqlst = sqlst + '"' +media['type']+ '",'
-            sqlst = sqlst + '"' +media['url']+ '",'
-            sqlst = sqlst + '"' +mediaregion+ '",'
-            sqlst = sqlst + '"' +media['format']+ '",'
-            sqlst = sqlst + str(counter)+","
-            sqlst = sqlst + str(id)+")"
-            result,success = queryDB(sqlst,(),True,mydb)
+            sqlst = 'INSERT INTO gameMedias (type,url,region,format,cnt,gameid) VALUES (%s,%s,%s,%s,%s,%s)'
+            values = (media['type'],media['url'],mediaregion,media['format'],str(counter),str(id))
+            result,success = queryDB(sqlst,values,True,mydb)
             counter = counter + 1
 
 def insertGameDatesInDB(id,dates):
@@ -3250,11 +3249,9 @@ def insertGameDatesInDB(id,dates):
         result,success = queryDB(sql,(),True,mydb)
         logging.debug('###### GOT RESULT FROM DATES CHECK '+str(result))
         if result == None or result == []:
-            sqlst = 'INSERT INTO gameDates (text,region,gameid) VALUES ('
-            sqlst = sqlst + '"' +rdate['text']+ '",'
-            sqlst = sqlst + '"' +rdate['region']+ '",'
-            sqlst = sqlst + str(id)+")"
-            result,success = queryDB(sqlst,(),True,mydb)
+            sqlst = 'INSERT INTO gameDates (text,region,gameid) VALUES (%s,%s,%s)'
+            values = (rdate['text'],rdate['region'],str(id))
+            result,success = queryDB(sqlst,values,True,mydb)
 
 def insertGameInLocalDb(gameInfo):
     logging.debug ('###### GAMEINFO IS '+str(gameInfo))

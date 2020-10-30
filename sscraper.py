@@ -79,7 +79,7 @@ UPDATEDATA = update
 try:
     logging.basicConfig(filename='sv2log.txt', filemode='a',
                         format='%(asctime)s - %(process)d - %(name)s - %(levelname)s - %(message)s',
-                        level=logging.DEBUG)
+                        level=logging.INFO)
     logging.debug("Logging service started")
 except Exception as e:
     logging.debug('error al crear log '+str(e))
@@ -233,15 +233,15 @@ def queryDB(sql,values,directCommit,thisDB,logerror=False,retfull=False):
                     mycursor.execute(sql, values)
                     myresult = mycursor.fetchall()
                     if logerror:
-                        logging.error ('@@@@@@@@@@ '+str(mycursor.statement))
-                    #logging.debug ('@@@@@@@@@@ '+str(mycursor.statement))
+                        logging.error ('@@@@@@@@@@ '+str(mycursor._last_executed))
+                    #logging.debug ('@@@@@@@@@@ '+str(mycursor._last_executed))
                 except Exception as e:
                     logging.error ('###### COULD NOT EXECUTE SELECT QUERY '+str(e))
-                    #logging.debug ('@@@@@@@@@@ '+str(mycursor.statement))
+                    #logging.debug ('@@@@@@@@@@ '+str(mycursor._last_executed))
                     mycursor.close()
                     return None,False
                 if mycursor.rowcount == 0:
-                    logging.info ('###### COULD NOT FIND IN THE DB')
+                    logging.debug ('###### COULD NOT FIND IN THE DB')
                     mycursor.close()
                     return None,False
                 else:
@@ -263,14 +263,14 @@ def queryDB(sql,values,directCommit,thisDB,logerror=False,retfull=False):
                     mycursor.execute(sql, values)
                     logging.debug('####### QUERY EXECUTED PROPERLY')
                     if logerror:
-                        logging.error ('@@@@@@@@@@ '+str(mycursor.statement))
-                    #logging.debug ('@@@@@@@@@@ '+str(mycursor.statement))
+                        logging.error ('@@@@@@@@@@ '+str(mycursor._last_executed))
+                    #logging.debug ('@@@@@@@@@@ '+str(mycursor._last_executed))
                     mycursor.close()
                 except Exception as e:
                     logging.error ('###### INNER - COULD NOT EXECUTE QUERY '+str(e))
                     logging.error ('###### SQL '+str(sql))
                     logging.error ('###### VALUES '+str(values))
-                    ###logging.error ('@@@@@@@@@@ '+str(mycursor.statement))
+                    ###logging.error ('@@@@@@@@@@ '+str(mycursor._last_executed))
                     mycursor.close()
                     return None,False
                 if directCommit and not migrateDB:
@@ -378,7 +378,7 @@ def updateInDBV2Call(api,params,response):
             logging.info ('###### THERE IS NO GAME IN THE RESPONSE ')
             return False
     else:
-        logging.info ('###### COULD NOT INSERT INTO DB V2 API CACHE')
+        logging.error ('###### COULD NOT INSERT INTO DB V2 API CACHE')
         return False
 
 def searchInDBV2Call(api,params):
@@ -853,7 +853,7 @@ def waitNewDay(runTime):
     ### THIS FUNCTION WAITS FOR THE TIME PASSED AS PARAMETER TO CONTINUE SCRAPPING
     ### BUT IT WILL ALSO CHECK FROM TIME TO TIME IN CASE THE QUOTA IS RELEASED SOONER
     startTime = time(*(map(int, runTime.split(':'))))
-    logging.info ('Starttime is '+str(startTime))
+    logging.info ('###### WILL RESTART PROCESS AT '+str(startTime))
     allowed = False
     anon = False
     logging.info ('###### WAITING FOR NEXT DAY')
@@ -947,9 +947,9 @@ def callAPI(URL, API, PARAMS, CURRSSID,Version='',tolog=''):
                 VTWOQUOTA = False
         except Exception as e:
             if 'ssuser' in str(e):
-                logging.info ('###### ERROR IN GETTING INFORMATION FROM RESPONSE // PROBABLY ANON CALL [SSUSER MISSING] , NOTHING TO WORRY ABOUT '+str(e))
+                logging.error ('###### ERROR IN GETTING INFORMATION FROM RESPONSE // PROBABLY ANON CALL [SSUSER MISSING] , NOTHING TO WORRY ABOUT '+str(e))
             elif 'requests' in str(e):
-                logging.info ('###### ERROR IN GETTING QUOTA INFORMATION IN RESPONSE '+str(e))
+                logging.error ('###### ERROR IN GETTING QUOTA INFORMATION IN RESPONSE '+str(e))
             else:
                 logging.error ('###### ERROR IN GETTING RESPONSE '+str(e))
     return myJson
@@ -1368,16 +1368,26 @@ def updateHashInDB(file,hashType,hash):
         logging.debug ('###### COULD NOT UPDATE HASH')
     return success
 
-def insertHashInDB(file,hashType,hash):
-    logging.debug ('###### INSERTING '+hashType+' '+hash+' FOR FILE '+file)
-    sql = "INSERT INTO filehashes (file, "+hashType.upper()+") VALUES (%s, %s)"
-    val =(str(file),str(hash))
+def insertHashInDB(myfile,hashType,hash):
+    logging.debug ('###### INSERTING '+hashType+' '+hash+' FOR FILE '+myfile)
+    sql ="SELECT file FROM filehashes where file = %s"
+    val =(str(myfile))
+    result,success = queryDB(sql,val,True,mydb)
+    logging.debug ('###### '+str(result))
+    if not success:
+        logging.debug ('###### FILE RECORD DOES NOT EXSITS FOR '+myfile)
+        sql = "INSERT INTO filehashes (file, "+hashType.upper()+") VALUES (%s, %s)"
+        val =(str(myfile),str(hash))
+    else:
+        logging.debug ('###### FILE RECORD DOES EXSITS FOR '+myfile)
+        sql = "UPDATE filehashes SET "+hashType.upper()+"= %s WHERE FILE=%s"
+        val =(str(hash),str(myfile))
     result,success = queryDB(sql,val,True,mydb)
     if success:
         logging.debug ('###### HASH INSERTED ')
     else:
         logging.debug ('###### COULD NOT INSERT HASH')
-        success = updateHashInDB(file,hashType,hash)
+        success = updateHashInDB(myfile,hashType,hash)
     return success
 
 
@@ -1527,9 +1537,9 @@ def process7Zip(path,zipfile,CURRSSID,sysid):
             gameinfo = processFile (path,zfile,CURRSSID,True,sysid)
             if gameinfo:
                 if 'jeu' in gameinfo:
-                    logging.info ('###### FOUND GAME INFO FOR '+zipfile)
+                    logging.debug ('###### FOUND GAME INFO FOR '+zipfile)
                     return gameinfo
-    logging.info ("###### DID NOT FIND GAME INFO FOR "+zipfile)
+    logging.debug ("###### DID NOT FIND GAME INFO FOR "+zipfile)
     return gameinfo
 
 def processZip(path,zipfile,CURRSSID,extensions,sysid):
@@ -1581,7 +1591,7 @@ def processZip(path,zipfile,CURRSSID,extensions,sysid):
                     updateHashInDB(path+'/'+zipfile,'CRC',crczfile)
                     updateHashInDB(path+'/'+zipfile,'MD5',md5zfile)
                     return zipfile,gameinfo
-    logging.info ("###### COULD NOT FIND GAME INFO FOR "+zipfile)
+    logging.debug ("###### COULD NOT FIND GAME INFO FOR "+zipfile)
     return zipfile,gameinfo
 
 def processDir(dir,path,CURRSSID,extensions,sysid):
@@ -1603,7 +1613,7 @@ def processDir(dir,path,CURRSSID,extensions,sysid):
 
 def goForFile(file,path,CURRSSID,extensions,sysid):
     ### WE'RE GOING TO PROCESS A FILE
-    logging.info ('###### GO FOR FILE '+str(file))
+    logging.debug ('###### GO FOR FILE '+str(file))
     ### GET THE FILE EXTENSION
     exten = os.path.splitext(file)[1]
     logging.debug ('###### EXTENSIONS '+str(exten))
@@ -1642,14 +1652,14 @@ def goForFile(file,path,CURRSSID,extensions,sysid):
         return file,gameinfo
     else:
         ### SO WE DIDN'T GET ANYTHING, RETURN NONE THEN
-        logging.info('###### COULD NOT GET GAME INFO ')
+        logging.debug('###### COULD NOT GET GAME INFO ')
         return file, None
     return file, None
 
 
 def processFile (path,file,CURRSSID,doRename,sysid):
     ### SO WE ARE PROCESSING A GENERAL FILE
-    logging.info ('###### PROCESSFILE '+file)
+    logging.debug ('###### PROCESSFILE '+file)
     ### DO WE NEED TO RENAME FILE? (THIS IS DONE TO AVOID STRANGE CHARACTERS IN FILENAMES)
     if doRename:
         ### YES, PLEQSE RENAME
@@ -1699,7 +1709,7 @@ def getRomFiles(path,acceptedExtens):
         filelist = []
         filelist.extend(sorted(glob.glob('*.*')))
         iterlist = list(filelist)
-        logging.info ('###### FOUND '+str(len(filelist))+' IN PATH, WILL VERIFY FOR EXTENSIONS')
+        logging.debug ('###### FOUND '+str(len(filelist))+' IN PATH, WILL VERIFY FOR EXTENSIONS')
         for myfile in iterlist:
             try:
                 extens = myfile[myfile.rindex('.'):]
@@ -1708,14 +1718,14 @@ def getRomFiles(path,acceptedExtens):
                 filelist.remove(myfile)
             logging.debug('###### FOR FILE '+myfile+' EXTENSION IS '+extens)
             if extens not in acceptedExtens:
-                logging.info ('###### REMOVED '+myfile+' FROM COPY LIST')
+                logging.debug ('###### REMOVED '+myfile+' FROM COPY LIST')
                 try:
                     filelist.remove(myfile)
                 except Exception as e:
                     logging.error ('###### COULD NOT REMOVE '+myfile+' FROM LIST')
         ### GET THE LIST OF FILES THAT COMPLY WITH THE ACCEPTED EXTENSIONS (PLUS ZIP, REMEMBER)
-        logging.info ('###### FOUND '+str(len(filelist))+' FILES WITH EXTENSIONS '+str(acceptedExtens))
-        logging.info ('###### '+str(filelist))
+        logging.debug ('###### FOUND '+str(len(filelist))+' FILES WITH EXTENSIONS '+str(acceptedExtens))
+        logging.debug ('###### '+str(filelist))
     except Exception as e:
         ### FOR SOME REASON SOMETHING WENT WRONG WHEN SEARCHING FOR FILES SO LET EVERYONE KNOW`
         logging.error('###### THERE ARE NO FILES IN DIRECTORY ' + path + str(e))
@@ -1736,7 +1746,7 @@ def grabData(system, path, CURRSSID, acceptedExtens):
     for file in filelist:
         ### CREATE A PORCESS FILE VARIABLE SO WE KEEP THE INITIAL FILE VARIABLE QUIET
         procfile = file
-        logging.info ('###### STARTING TO PROCESS FILE '+file)
+        logging.info ('---------------------- START FILE ['+procfile+'] ------------------------------')
         ### INITIALIZE GAMEINFO, WE DO NOT WANT SOMETHING STRANGE HAPPENING
         gameinfo = None
         ### INITIALIZE THSIGAME ALSO
@@ -1792,7 +1802,7 @@ def grabData(system, path, CURRSSID, acceptedExtens):
     xmlFile = path + '/gamelist.xml'
     ### IF THE FILE IS EXISTING, REMOVE IT
     if os.path.isfile(xmlFile):
-        logging.info ('###### REMOVING GAMELIST')
+        logging.debug ('###### REMOVING GAMELIST')
         os.remove(xmlFile)
     ### AND THEN CREATE IT
     result = tree.write(xmlFile)
@@ -1847,11 +1857,12 @@ def findMissingGame(gameName,systemid):
     gameId = 0
     if results:
         logging.debug('###### THERE ARE RESULTS, WILL TRY TO MATCH WITH '+srchName)
-        if isinstance(results,list):            
+        if isinstance(results[0],tuple):
+            logging.debug ('###### '+str(results))            
             logging.debug ('###### I FOUND SEVERAL CANDIDATES')
             for result in results:
                 logging.debug ('###### COMPARING WITH '+result[2]+' AND '+result[3])
-                if gameNameMatches(srchName,result[2],systemid) or gameNameMatches(srchName,result[3],systemid):
+                if gameNameMatches(srchName,result[2]) or gameNameMatches(srchName,result[3]):
                     logging.debug('###### THERE IS A MATCH!!!')
                     gameId = result[0]
                     break
@@ -1859,8 +1870,9 @@ def findMissingGame(gameName,systemid):
                     logging.debug ('###### NO LUCK THIS TIME')
         else:
             logging.debug ('###### I FOUND ONE CANDIDATE')
+            logging.debug (type(results))
             logging.debug('###### '+str(results))
-            if gameNameMatches(srchName,results[2],systemid) or gameNameMatches(srchName,results[3],systemid):
+            if gameNameMatches(srchName,results[2]) or gameNameMatches(srchName,results[3]):
                 gameId = results[0]
                 logging.debug ('####### FOUND IT!! '+str(results))
     else:
@@ -1980,7 +1992,7 @@ def getGameInfo(CURRSSID, pathtofile, file, mymd5, mysha1, mycrc, sysid):
     if mymd5 == '' or mysha1 == '' or mycrc == '':
         # YES, GO BACK
         return file,'ERROR'
-    logging.info ('###### GETTING GAME INFORMATION')
+    logging.debug ('###### GETTING GAME INFORMATION')
     ### THIS IS THE NAME OF THE API WE HAVE TO CALL
     API = "jeuInfos"
     ### INITIALIZE PARAMETERS, STARTING BY THE FIXED ONES (SEE CONFIG)
@@ -2010,7 +2022,7 @@ def getGameInfo(CURRSSID, pathtofile, file, mymd5, mysha1, mycrc, sysid):
             return file, response
         if response == 'ERROR':
             ### YES, SO RETURN TO SKIP THE FILE IF POSSIBLE
-            logging.info ('###### QUOTA LIMIT DONE RETURNED BY API')
+            logging.info ('###### ERROR RETURNED BY API')
             return file, response
         ### DID THE SCRAPER RETURN A VALID ROM?
         ### USUALLY IN A VALID RESPONSE WE WOULD HAVE THE JEU KEY
@@ -2095,7 +2107,7 @@ def getGameInfo(CURRSSID, pathtofile, file, mymd5, mysha1, mycrc, sysid):
                 ### YES WE DID
                 response = None
                 response = newresponse
-                logging.info ('###### GOT UPDATED VERSION FROM API')
+                logging.debug ('###### GOT UPDATED VERSION FROM API')
                 #logging.debug ('###### RESPONSE TO UPDATE '+str(response))
                 updateDB (mysha1,response)
                 return file,response
@@ -2205,7 +2217,7 @@ def getSystemForRom(rom,sysid):
 def myFileCopy(origin,destination):
     logging.debug ('###### GOING TO TRY TO COPY '+origin+' INTO '+destination)
     if (not os.path.isfile(origin)):
-        logging.info ('###### ORIGIN FILE '+origin+' DOES NOT EXIST')
+        logging.debug ('###### ORIGIN FILE '+origin+' DOES NOT EXIST')
         return False
     if (not os.path.isfile(destination)):
         logging.debug ('###### DESTINATION FILE DOES NOT EXISTS, GOING TO COPY')
@@ -2220,7 +2232,7 @@ def myFileCopy(origin,destination):
             logging.debug ('###### DESTINATION FILE EXISTS BUT SIZE DIFFERS, GOING TO COPY')
             copyfile(origin,destination)
         else:
-            logging.info ('###### FILE '+destination+' ALREADY EXISTS')
+            logging.debug ('###### FILE '+destination+' ALREADY EXISTS')
     return False
 
 def copyRoms (systemid,systemname,path,CURRSSID,extensions,outdir):
@@ -2237,7 +2249,7 @@ def copyRoms (systemid,systemname,path,CURRSSID,extensions,outdir):
         path = path + '/'
     logging.error ('###### STARTING SYSTEM '+str(systemname))
     for file in filelist:
-        logging.error ('-+-+-+-+-+-+ STARTING COPYING '+str(file)+' -+-+-+-+-+-+ ')
+        logging.info ('-+-+-+-+-+-+ STARTING COPYING '+str(file)+' -+-+-+-+-+-+ ')
         commcount = commcount +1
         if commcount == 50:
             try:
@@ -2311,8 +2323,8 @@ def copyRoms (systemid,systemname,path,CURRSSID,extensions,outdir):
             myFileCopy(thisfile,thisdfile)
         else:
             logging.error ('###### FAILED TO COPY ROM '+origfile+' TO DESTINATION')
-        logging.error ('-+-+-+-+-+-+ FINISHED COPYING '+str(file)+' -+-+-+-+-+-+ ')
-    logging.error ('###### FINISHED SYSTEM '+str(systemname))
+        logging.info ('-+-+-+-+-+-+ FINISHED COPYING '+str(file)+' -+-+-+-+-+-+ ')
+    logging.info ('###### FINISHED SYSTEM '+str(systemname))
     return foundSys
 
 
@@ -2368,12 +2380,12 @@ def scrapeRoms(CURRSSID,sortRoms=False,outdir=''):
                         for mysystem in systems:
                             ### API RETRUS SOMETIMES MORE THAN ONE SYSTEM NAME SO WE NEED TO ITERATE THROUGH ALL OF THEM
                             for apisysname in mysystem['noms']:
-                                logging.info ('###### COMPARING '+sysname.upper()+' WITH '+mysystem['noms'][apisysname].upper())
+                                logging.debug ('###### COMPARING '+sysname.upper()+' WITH '+mysystem['noms'][apisysname].upper())
                                 if sysname.upper()==mysystem['noms'][apisysname].upper():
                                     ### WE FOUND A MATCH SO WE ASSIGN A SYSTEM ID
                                     systemid = str(mysystem['id'])
                                     systemname = mysystem['noms']
-                                    logging.info ('###### FOUND ID '+systemid+' FOR SYSTEM '+sysname)
+                                    logging.debug ('###### FOUND ID '+systemid+' FOR SYSTEM '+sysname)
                                     foundsys = True
                                     ### AND WE SKIP
                                     break
@@ -2425,7 +2437,7 @@ def updateGameID (file,sha,gameid):
 
 
 def transformFilename(fileName):
-    logging.info ('###### RECEIVED ORIGINAL FILENAME '+fileName)
+    logging.debug ('###### RECEIVED ORIGINAL FILENAME '+fileName)
     ## 2 - Name removing underscores by spaces
     fileName = fileName.replace('_',' ')
     ## 2 - Name removing versions and [] and ()
@@ -2440,7 +2452,7 @@ def transformFilename(fileName):
         for m in matches:
             fileName = fileName+m.group(0)+' '
         fileName=fileName.strip()
-    logging.info ('###### RETURNING CONVERTED FILENAME '+fileName)
+    logging.debug ('###### RETURNING CONVERTED FILENAME '+fileName)
     return fileName
 
 
@@ -2485,12 +2497,12 @@ def fuzzyMatch (a,b):
         logging.debug ('###### FOUND '+str(mparts)+' OF '+str(len(bparts)))
     return False
 
-################### PARENT IDS OF SYSTEMS TO CHECK
-
-def gameNameMatches(orig,chkname,sys):
+###############
+def gameNameMatches(orig,chkname):
     ## Convert non ascii codes to normal codes
     ##for chk in chkname['noms']:
     ###### Remove parentehsis and first space
+    logging.debug ('###### CHECKING '+orig+' WITH '+chkname)
     if orig.upper() == chkname.upper():
         logging.debug ('///////'+chkname+'//////'+orig)
         return True
@@ -2518,65 +2530,68 @@ def gameNameMatches(orig,chkname,sys):
         logging.debug ('///////'+rmname+'//////'+orig)
         return True
     chk = chkname
-    chk = chk.encode('ascii', 'ignore')
+    try:
+        chk = chk.encode('ascii', 'ignore')
+    except Exception as e:
+        logging.error ('###### ERROR WHILE ENCODING RETURNED GAME TO ASCII '+str(e))
     ### 'NN TODO
     logging.debug ('####### NAME GRABBED - NAME INFERRED')
     if chkNamesMatch(chk.upper(),replace_roman_numerals(orig.upper())):
-        logging.info ('###### NAME MATCHES')
+        logging.debug ('###### NAME MATCHES')
         return True
     if chkNamesMatch(chk.upper().replace('!',''),orig.upper()):
-        logging.info ('###### NAME MATCHES')
+        logging.debug ('###### NAME MATCHES')
         return True
     if chkNamesMatch(chk.upper().replace('.',''),orig.upper()):
-        logging.info ('###### NAME MATCHES')
+        logging.debug ('###### NAME MATCHES')
         return True
     if chkNamesMatch(chk.upper(),orig.upper()):
-        logging.info ('###### NAME MATCHES')
+        logging.debug ('###### NAME MATCHES')
         return True
     if chkNamesMatch(chk.upper(),re.sub('\(.\)','',orig.upper()).strip()):
-        logging.info ('###### NAME MATCHES')
+        logging.debug ('###### NAME MATCHES')
         return True
     if chkNamesMatch(chk.upper(),re.sub('\[.\]','',orig.upper()).strip()):
-        logging.info ('###### NAME MATCHES')
+        logging.debug ('###### NAME MATCHES')
         return True
     if chkNamesMatch(chk.upper(),re.sub('\(.\)\[.\]','',orig.upper()).strip()):
-        logging.info ('###### NAME MATCHES')
+        logging.debug ('###### NAME MATCHES')
         return True
     if chkNamesMatch(chk.upper(),re.sub('\[.\]\(.\)','',orig.upper()).strip()):
-        logging.info ('###### NAME MATCHES')
+        logging.debug ('###### NAME MATCHES')
         return True
     if chkNamesMatch(chk.upper(),orig.replace(',','').upper()):
-        logging.info ('###### NAME MATCHES')
+        logging.debug('###### NAME MATCHES')
         return True
     if chkNamesMatch(chk.upper(),orig.replace(' AND ',' & ').upper()):
-        logging.info ('###### NAME MATCHES')
+        logging.debug ('###### NAME MATCHES')
         return True
     if chkNamesMatch(chk.upper(),orig.replace(' & ',' AND ').upper()):
-        logging.info ('###### NAME MATCHES')
+        logging.debug ('###### NAME MATCHES')
         return True
     if chkNamesMatch(chk.replace(' - ',' ').upper(),orig.upper()):
-        logging.info ('###### NAME MATCHES')
+        logging.debug ('###### NAME MATCHES')
         return True
     if chkNamesMatch(chk.upper(),orig.replace(' Dr ',' Dr. ').upper()):
-        logging.info ('###### NAME MATCHES')
+        logging.debug ('###### NAME MATCHES')
         return True
     if chkNamesMatch(chk.upper(),orig.replace(':','-').upper()):
-        logging.info ('###### NAME MATCHES')
+        logging.debug ('###### NAME MATCHES')
         return True
     if chkNamesMatch(chk.upper(),orig.replace(':',' -').upper()):
-        logging.info ('###### NAME MATCHES')
+        logging.debug ('###### NAME MATCHES')
         return True
     if chkNamesMatch(chk.upper(),orig.replace(':',' - ').upper()):
-        logging.info ('###### NAME MATCHES')
+        logging.debug ('###### NAME MATCHES')
         return True
     if chkNamesMatch(chk.upper(),orig.replace(':',' -').upper()):
-        logging.info ('###### NAME MATCHES')
+        logging.debug ('###### NAME MATCHES')
         return True
     if chkNamesMatch(chk.upper(),orig.upper()+' THE'):
-        logging.info ('###### NAME MATCHES')
+        logging.debug ('###### NAME MATCHES')
         return True
     if fuzzyMatch(chk,orig):
-        logging.info ('###### NAME MATCHES')
+        logging.debug ('###### NAME MATCHES')
         return True          
     matches = re.search('\w*\d',orig)
     if matches:
@@ -2584,12 +2599,12 @@ def gameNameMatches(orig,chkname,sys):
         newint = re.sub (r'(\d)',r' \1',splitnum)
         splitnum = re.sub('\w*\d',newint,orig)
         if chkNamesMatch(chk.upper(),splitnum.upper()):
-            logging.info ('###### NAME MATCHES')
+            logging.debug ('###### NAME MATCHES')
             return True
         if chkNamesMatch(chk.upper(),splitnum.upper()+' THE'):
-            logging.info ('###### NAME MATCHES')
+            logging.debug ('###### NAME MATCHES')
             return True
-    logging.info ('###### THERE IS NO MATCH')
+    logging.debug ('###### THERE IS NO MATCH')
     return False
 
 def nameFromArcadeCSV(name):
@@ -2597,7 +2612,7 @@ def nameFromArcadeCSV(name):
         csv_reader = csv.reader(csv_file, delimiter=',')
         for row in csv_reader:
             if row[0].upper() == name.upper():
-                logging.info ('###### FOUND MATCH FOR '+row[1])
+                logging.debug ('###### FOUND MATCH FOR '+row[1])
                 return row[1]
         logging.info ('###### DID NOT FIND MATCH FOR '+name)
     return ''
@@ -2617,7 +2632,7 @@ def getArcadeName(name):
         return gamename
     except:
         logging.error('###### COULD NOT GET ARCADE NAME FROM MAMEDB ')
-        logging.info('###### TRYING WITH BLU FERRET IN URL '+callURL2)
+        logging.debug('###### TRYING WITH BLU FERRET IN URL '+callURL2)
         try:
             response = callURL(callURL2) 
             gamename = re.findall("\<title\>Game Details:  (\w*).*\<\/title\>", response[0])
@@ -2625,13 +2640,13 @@ def getArcadeName(name):
             return gamename
         except:
             logging.error ('###### COULD NOT GET NAME FROM BLU FERRET')
-            logging.info('###### TRYING WITH ARCADE ITALIA IN URL '+callURL3)
+            logging.debug('###### TRYING WITH ARCADE ITALIA IN URL '+callURL3)
             try:
                 response = callURL(callURL3) 
                 gamename = re.findall("<title>(.*?)<\/title>", response)[0].replace(' - MAME machine','').replace(' - MAME software','')
                 gamename = gamename.replace(' - MAME machin...','')
                 if gamename.upper()=='ARCADE DATABASE':
-                    logging.error ('###### COULD NOT GET NAME FROM ARCADE ITALIA')
+                    logging.debug ('###### COULD NOT GET NAME FROM ARCADE ITALIA')
                     gamename = ''
                 logging.info ('###### FOUND GAME IN ARCADEITALIA '+gamename)
                 return gamename
@@ -2677,10 +2692,10 @@ def findMissing():
             newmode = False
             sha = str(row[2])
             try:
-                logging.info ('###### LOOKING IF THERE IS SOMETHING TO DO')
+                logging.debug ('###### LOOKING IF THERE IS SOMETHING TO DO')
                 whattodo = str(row[6]).upper()
                 newmode = True
-                logging.info ('###### FOUND SOMETHING TO DO '+whattodo)
+                logging.debug ('###### FOUND SOMETHING TO DO '+whattodo)
                 if whattodo=='BIOS':
                     fname = row[1][row[1].rfind('/')+1:]
                     logging.info('###### MOVING TO BIOS '+fname)
@@ -2706,7 +2721,7 @@ def findMissing():
                         newGameId = int(whattodo)
                     except:
                         newGameId = 0
-                    logging.info ('###### FOUND A FORCED GAME ID IN THE FILE '+str(newGameId))
+                    logging.debug ('###### FOUND A FORCED GAME ID IN THE FILE '+str(newGameId))
             except Exception as e:
                 logging.error('###### ERROR DETECTING NEW MODE '+str(e))
                 newGameId = 0
@@ -2717,7 +2732,7 @@ def findMissing():
                 updateGameID (row[1],sha,'0')
                 newline = row[0]+'|'+row[1]+'|'+sha+'|'+row[3]+'|'+row[4]+'|'+row[5]+'|FORCED_ID'
                 system=row[0]
-                logging.info ('###### DOING RESEARCH FOR '+row[1]+' IN SYSTEM '+str(system))
+                logging.debug ('###### DOING RESEARCH FOR '+row[1]+' IN SYSTEM '+str(system))
                 if str(system) not in arcadeSystems:
                     searchSystems=[system]
                     filename=(row[1][row[1].rfind('/')+1:row[1].rfind('.')]).replace('_',' ')
@@ -2731,7 +2746,7 @@ def findMissing():
                         filename = 'UNKNOWN'
                     newline = newline +'|'+filename
                     searchSystems = system
-                logging.info ('###### WILL SEARCH IN '+str(searchSystems))
+                logging.debug ('###### WILL SEARCH IN '+str(searchSystems))
                 myGameName = transformFilename(filename)
                 if myGameName !='':
                     myParams = None
@@ -2767,23 +2782,13 @@ def findMissing():
                         gameSearch=gameSearch.replace(',','')
                         myParams['recherche']=gameSearch
                         if myParams['recherche'].upper() == 'EAMON':
-                                #myeamonsearch=''
-                                #myeamontitle = myGameName.split(' ')
-                                #logging.debug ('###### I HAVE '+str(len(myeamontitle))+' WORDS TO LOOK')
-                                #for i in range(3,len(myeamontitle)):
-                                #    myeamonsearch = myeamonsearch + myeamontitle[i]+'+'
                                 myParams['recherche']=myParams['recherche']+' '+myGameName.split(' ')[1]
                                 logging.debug ('###### THIS IS A EAMON GAME - SO I COMPLETE THE NAME '+myParams['recherche'])
-                                #ansretries = ansretries - 1
-                                #if len(myGameName.split(' '))>3:
-                                #    myParams['recherche'] = myParams['recherche'] + ' ' + myGameName.split(' ')[3]
-                                #if len(myGameName.split(' '))>4:
-                                #    myParams['recherche'] = myParams['recherche'] + ' ' + myGameName.split(' ')[4]
                         found = False
                         systemPos = 0
                         myParams['systemeid']=str(system)
                         ## VOY A BUSCAR LOS TRES PRMEROS CARACTERES, Y DESPUES HACER UNA LOGICA EN EL MATCH DE CUANTOS CARACTERES IGUALES HAY, NO LOS 4 PRIMEROS
-                        logging.info('###### LOOKING SCRAPER FOR '+myParams['recherche']+ ' FOR SYSTEM '+str(system))
+                        logging.debug ('###### LOOKING SCRAPER FOR '+myParams['recherche']+ ' FOR SYSTEM '+str(system))
                         returnValue = callAPI(fixedURL,API,myParams,0,'2',' SYSTEM SOMETHING')
                         logging.debug (returnValue)
                         if 'jeux' in returnValue.keys():
@@ -2792,8 +2797,7 @@ def findMissing():
                                 for game in returnValue['jeux']:
                                     logging.debug ('###### TRYING WITH GAME IN POSITION ['+str(position)+'] OF ['+str(len(returnValue['jeux']))+']')
                                     thisGameID = returnValue['jeux'][position]['id']
-                                    
-                                    if gameNameMatches(myGameName,game,system):
+                                    if gameNameMatches(myGameName,game):
                                         if isSystemOk(game['systeme']['id'],str(system)):
                                             updateGameID (row[1],sha,thisGameID)
                                             found = True
@@ -2813,11 +2817,11 @@ def findMissing():
                                 if str(returnValue['jeux'][0]) != '{}':
                                     game = returnValue['jeux'][0]
                                     thisGameID = returnValue['jeux'][0]['id']
-                                    if gameNameMatches(myGameName,game,system):
+                                    if gameNameMatches(myGameName,game):
                                         if isSystemOk(game['systeme']['id'],str(system)):
                                             updateGameID (row[1],sha,thisGameID)
                                             found = True
-                                            logging.info ('###### FOUND MISSING INFO FOR '+filename+' SHA '+sha)
+                                            logging.debug ('###### FOUND MISSING INFO FOR '+filename+' SHA '+sha)
                                         else:
                                             logging.debug ('###### MATCH NOT OF SAME SYSTEM')
                                     else:
@@ -2872,18 +2876,18 @@ def cleanGameList(path):
             if image != '':
                 try:
                     os.remove(image)
-                    logging.info ('###### DELETED IMAGE '+image)
+                    logging.debug ('###### DELETED IMAGE '+image)
                 except Exception as e:
                     logging.error ('###### COULD NOT DELETE '+image+' '+str(e))
             if video != '':
                 try:
                     os.remove(video)
-                    logging.info ('###### DELETED VIDEO '+video)
+                    logging.debug ('###### DELETED VIDEO '+video)
                 except Exception as e:
                     logging.error ('###### COULD NOT DELETE '+video+' '+str(e))
             updateGameID (file,sha,'')
             deleteHashCache(file) 
-            logging.info ('###### REMOVED '+file+' WITH HASH '+sha)
+            logging.debug ('###### REMOVED '+file+' WITH HASH '+sha)
 
 
 def multiDisk(filename):
@@ -2994,7 +2998,7 @@ def renameFiles():
     ### Connect to DB to get all files
     hashes = getAllGamesinDB()
     procfiles = 0
-    logging.info ('###### - FOUND '+str(len(hashes))+' HASHES IN DB')
+    logging.debug ('###### - FOUND '+str(len(hashes))+' HASHES IN DB')
     for hash in hashes:
         thisfile = hash[0]
         sha1offile = hash[1]
@@ -3068,11 +3072,11 @@ def insertSystemInLocalDb(system):
         logging.debug ('###### COULD NOT FIND HYPERSPIN NAME')
         hyperspin = ''
     if (not result) or result == []:
-        logging.info ('###### GOING TO INSERT IN SYSTEMS TABLE')
+        logging.debug ('###### GOING TO INSERT IN SYSTEMS TABLE')
         values = (system['id'],system['noms']['nom_eu'],system['type'],int(parent),recalbox,retropie,launchbox,hyperspin)
         sqlst = 'INSERT INTO systems (id,`text`,`type`,parent,recalbox,retropie,launchbox,hyperspin) values (%s,%s,%s,%s,%s,%s,%s,%s)'
     else:
-        logging.info ('###### GOING TO UPDATE SYSTEMS TABLE')
+        logging.debug ('###### GOING TO UPDATE SYSTEMS TABLE')
         values = (system['noms']['nom_eu'],system['type'],int(parent),recalbox,retropie,launchbox,hyperspin,system['id'])
         sqlst = 'UPDATE systems SET `text`=%s , `type`=%s , parent=%s , recalbox=%s , retropie=%s , launchbox=%s , hyperspin=%s where id = %s'
     result,success = queryDB(sqlst,values,True,mydb)
@@ -3083,7 +3087,7 @@ def insertEditorInLocalDb(edid,edname):
     result,success = queryDB(sqlst,(),False,mydb)
     logging.debug ('###### SQL RESULT FROM EDITORS EQUALS '+str(result))
     if (not result) or result == []:
-        logging.info ('###### GOING TO UPDATE EDITORS TABLE')
+        logging.debug ('###### GOING TO UPDATE EDITORS TABLE')
         if len(edname) >  100:
 	    edname = edname[:99]
         sqlst = 'INSERT INTO editors (id,text) values (%s,%s)'

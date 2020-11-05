@@ -150,6 +150,7 @@ class Game:
     ### THIS IS THE GAME CLASS, IT WILL HOLD INFORMATION OF EACH SCRAPED GAME
     def __init__(self, jsondata):
         if 'localpath' not in jsondata.keys():
+            logging.debug ('###### NO LOCALPATH DEFINED - CANNOT CREATE GAME')
             return None
         try:
             file = jsondata['localpath']
@@ -158,6 +159,7 @@ class Game:
         ### CAN WE COMPRESS FILE?? THIS IS DONE IN ORDER TO SAVE SPACE
         if file[file.rfind('.'):].lower() not in donotcompress:
             ### YES WE CAN ZIP FILE
+            logging.debug('###### GOING TO ZIP FILE')
             zippedFile = convertToZip(file)
         else:
             ### THIS EXTENSION HAS BEEN REQUESTED NOT TO BE ZIPPED
@@ -206,7 +208,7 @@ class Game:
             logging.debug('###### GAME OBJECT '+str(self))
             gameNode = ET.Element('game')
             attrs = vars(self)
-            logging.debug('###### GAME OBJECT '+str(attrs))
+            logging.debug('###### GAME ATTRIBUTES '+str(attrs))
             for attr in attrs:
                 logging.debug ('###### ATTRIBUTES '+str(attr))
                 subEl = ET.SubElement(gameNode, attr)
@@ -1542,6 +1544,64 @@ def process7Zip(path,zipfile,CURRSSID,sysid):
     logging.debug ("###### DID NOT FIND GAME INFO FOR "+zipfile)
     return gameinfo
 
+def processZipFile(path,filename,sysid):
+    logging.info ('###### PROCESSING ZIPFILE '+str(filename))
+    zfiles = getNamesInZip(path)
+    logging.debug('##### RETURNED THESE FILES IN ZIP ' + str(zfiles))
+    if zfiles == '':
+        # error extracting file, go to next one
+        logging.error('###### COULD NOT GET CONTENTS OF ZIP FILE ' + str(filename))
+        return 0
+    else:
+        for zfile in zfiles:
+            proczfile = zfile
+            logging.debug ('###### GETTING INFO FOR FILE '+proczfile+' INSIDE ZIP '+filename)
+            exten = os.path.splitext(proczfile)[1]
+            logging.debug ('###### EXTENSION IS '+exten)
+            ''''
+            if  exten not in extensions:
+               logging.debug ('###### EXTENSION IS NOT IN LIST OF ALLOWED EXTENSIONS, SKIPPING')
+               continue
+            else:
+            '''
+            result = extractZipFile(filename,proczfile,'/tmp')
+            logging.debug ('####### RESULT OF EXTRACT IS '+str(result))
+            gameId = 0
+            if result:
+                if '/' in zfile:
+		            unzipfile = '/tmp/'+zfile[zfile.rindex('/'):]
+                else:
+                    unzipfile = '/tmp/'+zfile
+                logging.debug ('###### RESULT FILE OF DECOMPRESSION IS '+str(unzipfile))
+                if os.path.isfile(unzipfile):
+                    gameres = querySHAinDB(sha1(unzipfile),md5(unzipfile),crc(unzipfile),unzipfile,sysid,path)
+                    if gameres:
+                        gameres = gameres.replace('\x0d\x0a','\\r\\n').replace('\x0a','').replace('\x09','').replace('\x0b','').replace('  ','').replace('\r','')
+                    os.remove(unzipfile)
+                else:
+                    gameres = None
+                    logging.error ('###### CANNOT CHECK FILE INSIDE ZIP')
+                logging.debug ('###### FOUND '+str(gameres))
+                if gameres:
+                    game = ast.literal_eval(gameres)
+                else:
+                    game = None
+                if isinstance (game,dict):
+                    gameId = game['jeu']['id']
+                    logging.debug ('###### FOUND SOMETHING FOR '+str(unzipfile)+' ID '+gameId)
+                    break
+                else:
+                    gameId = 0
+                    logging.debug ('###### COULD NOT FIND ANYTHING FOR '+str(unzipfile))
+    return gameId
+
+def process7ZFile(filename,sysid):
+    logging.debug ('###### PROCESSING ZIPFILE '+zipfile)
+    result = extractZipFile(zipfile,proczfile,path)
+    gameId = locateShainDB(sha1(filename),md5(filename),crc(filename),filename,sysid)
+    return gameId
+
+
 def processZip(path,zipfile,CURRSSID,extensions,sysid):
     logging.debug ('###### PROCESSING ZIPFILE '+zipfile)
     zipfile,gameinfo = processFile (path,zipfile,CURRSSID,True,sysid)
@@ -1716,7 +1776,7 @@ def getRomFiles(path,acceptedExtens):
             except Exception as e:
                 logging.error ('###### SEEMS THIS FILE '+myfile+' HAS NO EXTENSIONS, I REMOVE IT ['+str(e)+']')
                 filelist.remove(myfile)
-            logging.debug('###### FOR FILE '+myfile+' EXTENSION IS '+extens)
+            ##logging.debug('###### FOR FILE '+myfile+' EXTENSION IS '+extens)
             if extens not in acceptedExtens:
                 logging.debug ('###### REMOVED '+myfile+' FROM COPY LIST')
                 try:
@@ -1766,6 +1826,12 @@ def grabData(system, path, CURRSSID, acceptedExtens):
         ### DID WE GET GAME INFORMATION?
         if gameinfo is not None:
             try:
+                gameinfo['localpath']=file
+                logging.debug ('###### LOCAL PATH '+gameinfo['localpath'])
+                gameinfo['abspath']=path
+                logging.debug ('###### ABSOLUTE PATH  '+gameinfo['abspath'])
+                gameinfo['localhash']=sha1(path+'/'+file).upper()
+                logging.debug ('###### SHA1  '+gameinfo['localhash'])
                 ### YES, CREATE A GAME INSTANCE THEN
                 thisGame = None
                 thisGame = Game(gameinfo)
@@ -1776,6 +1842,7 @@ def grabData(system, path, CURRSSID, acceptedExtens):
             if thisGame is not None:
                 ### YES WE DID, SO GET THE XML FOR THIS GAME
                 myGameXML = thisGame.getXML()
+                logging.debug('###### GAME XML '+str(myGameXML))
                 ### DID IT WORK?
                 if myGameXML is not None:
                     ### YES, APPEND THE GAME TO THE GAMELIST
@@ -1835,7 +1902,7 @@ def arcadeSystemsList():
     logging.debug ('###### RETURNING SYSTEM LIST '+ret)
     return ret
 
-def findMissingGame(gameName,systemid):
+def findMissingGame(gameName,systemid,path,isArcade):
     logging.debug('###### WILL TRY TO FIND GAMES '+gameName+' FOR SYSTEM '+str(systemid))
     srchName = gameName[:gameName.rindex('.')]
     qName =gameName[0]+'%'
@@ -1877,12 +1944,29 @@ def findMissingGame(gameName,systemid):
                 logging.debug ('####### FOUND IT!! '+str(results))
     else:
         logging.debug ('####### COULD NOT FIND '+gameName+' FOR SYSTEM '+str(systemid))
+    if gameId == 0 and not isArcade:
+        logging.debug ('###### WILL CHECK IF IT IS A COMPRESSED FILE')
+        exten = gameName[gameName.rindex('.')+1:].upper()
+        logging.debug ('###### EXTENSION IS '+exten)
+        if exten == 'ZIP' or exten == '7Z':
+            logging.debug ('###### IT IS A COMPRESSED FILE')
+            gameId = processCompressedFile(path,gameName,systemid,exten)
+        else:
+            gameId = 0
+            logging.debug ('###### IT IS NOT A COMPRESSED FILE, BAD LUCK')
     return gameId
 
-def locateShainDB(mysha1='None',mymd5='None',mycrc='None',filename='',sysid=0):
-    result = ''
+def processCompressedFile(filepath,filename,systemid,exten):
+    gameId = 0
+    if exten == 'ZIP':
+        gameId = processZipFile(filepath,filename,systemid)
+    if exten == '7Z':
+        gameId = process7ZFile(filepath,filename,systemid)
+    return gameId
+
+
+def querySHAinDB(mysha1='None',mymd5='None',mycrc='None',filename='',sysid=0,path=''):
     logging.debug ('###### CONNECTING TO DB TO LOCATE DATA FOR '+mysha1)
-    ###### TODO: DB HAS CHANGED, SO I NEED TO UPDATE THIS PART
     sql = "SELECT  CONCAT ( '{\"jeu\":{\"id\":\"',mygameid,'\",\"noms\":[',COALESCE(names_result,''),'],\"synopsis\":[',COALESCE(synopsis_result,''),']\n\
             ,\"medias\":[',COALESCE(media_result,'') ,'],',COALESCE(system_result,'\"systeme\":{}'),',',COALESCE(editor_result,'\"editeur\":{}'),',',COALESCE(date_result,'\"dates\":{}'),'}}') as json\n\
             FROM (SELECT gr.gameid as mygameid,\n\
@@ -1902,6 +1986,10 @@ def locateShainDB(mysha1='None',mymd5='None',mycrc='None',filename='',sysid=0):
             LEFT JOIN gameDates gd on gd.gameid = gr.gameid where gr.romsha1 = %s or gr.rommd5 = %s or gr.romcrc =%s) as gameinfo"
     val = (mysha1,mymd5,mycrc)
     result,success = queryDB(sql,val,False,mydb)
+    return result
+
+def locateShainDB(mysha1='None',mymd5='None',mycrc='None',filename='',sysid=0,path=''):
+    result = querySHAinDB(mysha1,mymd5,mycrc,filename,sysid,path)
     if result is not None:
         logging.debug ('###### RECORD FOUND IN DB')
         logging.debug ('###### I\'VE FOUND WHAT YOU\'RE LOOKING FOR IN THE V2 DB')
@@ -1921,17 +2009,18 @@ def locateShainDB(mysha1='None',mymd5='None',mycrc='None',filename='',sysid=0):
         logging.debug ('###### GOT A RESULT AND I\'M RETURNING IT')
         return myres
     else:
-        gameID = findMissingGame(filename,sysid)
+        isArcade = isArcadeSystem(sysid)
+        gameID = findMissingGame(filename,sysid,path,isArcade)
         logging.debug ('###### GAMEID RETURNED IS '+str(gameID))
         if gameID == 0:
             logging.debug('###### CHECKING IF IT IS AN ARCADE GAME AND CHECK BY REAL NAME JUST IN CASE')
-            if isArcadeSystem(sysid):
+            if isArcade:
                 logging.error ('###### GOING TO GRAB ARCADE NAME')
                 arcadename = getArcadeName(filename)
                 logging.error ('###### GRABBED NAME IS ['+arcadename+']')
                 if arcadename != '':
                     logging.error ('###### GOING TO LOOK '+arcadename+' UP')
-                    gameID = findMissingGame(arcadename,sysid)
+                    gameID = findMissingGame(arcadename,sysid,path,isArcade)
         if gameID is not None:
             try:
                 myRom = {'romfilename':filename,'romsha1':mysha1.upper(),'romcrc':mycrc.upper(),'rommd5':mymd5.upper(),'beta':'0','demo':'0','proto':'0','trad':'0','hack':'0','unl':'0','alt':'0','best':'0','netplay':'0'}
@@ -1941,7 +2030,7 @@ def locateShainDB(mysha1='None',mymd5='None',mycrc='None',filename='',sysid=0):
             logging.debug ('###### MY ROM IS  '+str(myRom))
             insertGameRomsInDB(gameID,myRoms,sysid)
             if gameID !=0:
-                return locateShainDB(mysha1,mymd5,mycrc,filename,sysid)
+                return locateShainDB(mysha1,mymd5,mycrc,filename,sysid,path)
             else:
                 return None
         else:
@@ -2007,7 +2096,7 @@ def getGameInfo(CURRSSID, pathtofile, file, mymd5, mysha1, mycrc, sysid):
     ### INITIQLIZE VARIABLES TO AVOID ACRRY ON VALUES
     response = None
     ### FIRST, TRY TO GET THE ANSWER FRO THE DB, THIS IS DONE SO WE DO NOT CALL THE SCRAPER EVRYTIME IF WE HAVE ALREADY FETCHED INFORMATION FOR THIS PARTICULAR SHA
-    response = locateShainDB(mysha1,mymd5,mycrc,file,sysid)
+    response = locateShainDB(mysha1,mymd5,mycrc,file,sysid,pathtofile)
     ###logging.info ('######## '+str(response))
     ### DID WE SOMEHOW GOT AN EMPTY RESPONSE?
     if response !='':
@@ -2273,7 +2362,9 @@ def copyRoms (systemid,systemname,path,CURRSSID,extensions,outdir):
             newsys['name']=romSys.lower().replace(' ','').replace('.','')
             newsys['fullname']=romSys
             newsys['path']=outdir + newsys['name'].replace('/','-')
-            newsys['extension']=str(extensions)
+            newsys['extension']=''
+            for ext in extensions:
+                newsys['extension']=newsys['extension']+' '+ext
             newsys['command']=''
             newsys['platform']=newsys['name']
             newsys['theme']=newsys['name']
@@ -2337,7 +2428,7 @@ def scrapeRoms(CURRSSID,sortRoms=False,outdir=''):
     systems = getAllSystems(CURRSSID)
     if sortRoms == True:
         newSystems = []
-    ### CHECK IF WE HVAE SYSTEMS OR NOT
+    ### CHECK IF WE HAVE SYSTEMS OR NOT
     if systems == '':
         logging.error('###### CANNOT RETRIEVE SYSTEM LIST, EXITING')
         ### WE STOP EVERYTHING
@@ -2359,6 +2450,27 @@ def scrapeRoms(CURRSSID,sortRoms=False,outdir=''):
                 sysname ='unknown'
                 ### ITERATE THROU CHILD TAGS OF SYSTEM
                 for system in child:
+                    if system.tag == 'command':
+                        try:
+                            ### CREATE A LIST WITH ALL VALID EXTENSIONS (USUALLY THE EXTENSIONS ARE SEPARATED BY A SPACE IN THE CONFIG FILE)
+                            syscmd = system.text
+                        except:
+                            ### IF WE CANNOT GET A LIST OF EXTENSIONS FOR A SYSTEM WE DEFAULT TO 'ZIP'
+                            syscmd = 'NO COMMAND'
+                    if system.tag == 'platform':
+                        try:
+                            ### CREATE A LIST WITH ALL VALID EXTENSIONS (USUALLY THE EXTENSIONS ARE SEPARATED BY A SPACE IN THE CONFIG FILE)
+                            sysplat = system.text
+                        except:
+                            ### IF WE CANNOT GET A LIST OF EXTENSIONS FOR A SYSTEM WE DEFAULT TO 'ZIP'
+                            sysplat = 'EMPTY'
+                    if system.tag == 'theme':
+                        try:
+                            ### CREATE A LIST WITH ALL VALID EXTENSIONS (USUALLY THE EXTENSIONS ARE SEPARATED BY A SPACE IN THE CONFIG FILE)
+                            systheme = system.text
+                        except:
+                            ### IF WE CANNOT GET A LIST OF EXTENSIONS FOR A SYSTEM WE DEFAULT TO 'ZIP'
+                            systheme = 'EMPTY'
                     if system.tag == 'extension':
                         try:
                             ### CREATE A LIST WITH ALL VALID EXTENSIONS (USUALLY THE EXTENSIONS ARE SEPARATED BY A SPACE IN THE CONFIG FILE)
@@ -2407,7 +2519,11 @@ def scrapeRoms(CURRSSID,sortRoms=False,outdir=''):
                     ### SO WE START WITH THE SYSTEM PROCESSING
                     if sortRoms :
                         fetchedSystems = copyRoms (systemid,systemname,path,CURRSSID,extensions,outdir)
+                        
                         for fsys in fetchedSystems:
+                            fsys['command']=syscmd
+                            fsys['platform']=sysplat
+                            fsys['theme']=systheme
                             logging.debug ('###### ADDING FOUND SYSTEMS TO EXISTING ONES')
                             if fsys not in newSystems:
                                 newSystems.append(fsys)      
@@ -2522,19 +2638,23 @@ def gameNameMatches(orig,chkname):
     rmname = re.sub(r'\s?\(.*\)','',chkname)
     cname = re.sub(r'\s?\(.*\)','',kname)
     dname = re.sub(r'\s?\[.*\]','',cname)
-    qname = re.sub(r'\s[V|v]\d*.\d*','',dname)
-    ckname = re.sub(r'(?<!^)(?=[A-Z])', ' ', qname).replace('  ',' ')
+    ckname = re.sub(r'\s[V|v]\d*.\d*','',dname)
+    #ckname = re.sub(r'(?<!^)(?=[A-Z])', ' ', qname).replace('  ',' ')
+    logging.debug ('###### COMPARE ['+rmname+'] WITH ['+ckname+']')
+    #sys.exit()
     if '.' in rmname:
         rmname=rmname[:rmname.rindex('.')]
     if rmname.upper() == ckname.upper():
         logging.debug ('///////'+rmname+'//////'+orig)
         return True
     chk = chkname
+    '''
     try:
         chk = chk.encode('ascii', 'ignore')
     except Exception as e:
         logging.error ('###### ERROR WHILE ENCODING RETURNED GAME TO ASCII '+str(e))
     ### 'NN TODO
+    '''
     logging.debug ('####### NAME GRABBED - NAME INFERRED')
     if chkNamesMatch(chk.upper(),replace_roman_numerals(orig.upper())):
         logging.debug ('###### NAME MATCHES')
@@ -3376,6 +3496,7 @@ if sortroms !='':
     ### BASED ON THE SYSTEM THE ROM BELONGS TO
     logging.info ('###### GOING TO SORT YOUR ROMS')
     systems = sortRoms(sortroms)
+    logging.debug('###### FOUND '+str(systems))
     createEsConfig(systems,sortroms)
     logging.info ('###### FINSHED SORTING YOUR ROMS')
     sys.exit(0)
@@ -3393,7 +3514,7 @@ if migrateDB:
     currssid = 0
     gameid = int(startid)
     params =dict(fixParams)
-    numGames = 213623 #215000
+    numGames = 213625
     response = 'QUOTA'
     #### THis game with id Zero is going to be used to handle unknown roms
     zeroGame={'id':'0'}

@@ -43,20 +43,15 @@ import socket
 ### --rename: will look into the game name as downloaded from the site and rename the file accordingly
 
 parser = argparse.ArgumentParser(description='ROM scraper, get information of your roms from screenscraper.fr')
-parser.add_argument('--missing', help='Try to find missing ganes from the missing file',nargs=1)
 parser.add_argument('--update', help='Update local DB information from screenscraper',action='store_true')
 parser.add_argument('--clean', help='Clean a system from the DB, deletes all records from files', action='store_true')
 parser.add_argument('--rename', help='Rename files to match the actual game name in the DB', action='store_true')
 parser.add_argument('--startid', help='Start importing DB at gameid',nargs=1)
 parser.add_argument('--localdb', help='Use only local DB for scraping (except media)', action='store_true')
 parser.add_argument('--sort', help='Sorts all your roms and stores them by system in a new directroy structure',nargs=1)
+parser.add_argument('--config', help='emulation station configuration file to read',nargs=1)
 
 argsvals = vars(parser.parse_args())
-
-try:
-    missing = argsvals['missing'][0]
-except:
-    missing = ''
 
 try:
     sortroms = argsvals['sort'][0]
@@ -80,9 +75,9 @@ try:
     logging.basicConfig(filename='sv2log.txt', filemode='a',
                         format='%(asctime)s - %(process)d - %(name)s - %(levelname)s - %(message)s',
                         level=logging.INFO)
-    logging.debug("Logging service started")
+    logging.debug("###### LOGGING SERVICE STARTED")
 except Exception as e:
-    logging.debug('error al crear log '+str(e))
+    logging.debug('###### ERROR CREATING LOG '+str(e))
 
 sysconfig = config.sysconfig
 
@@ -130,21 +125,11 @@ VTWOQUOTA = False
 
 ### INSERT THE EXTENSIONS YOU DO NOT WANT TO HAVE ZIPPED IN THE LIST BELOW
 donotcompress = config.donotcompress
-### OUTPUT FILE WITH THE MISSING FILES CREATED IN THE FIRST ROUND
-missingfile= config.missingfile
-### OUTPUT FILE WITH THE MISSING FILES CREATED IN THE SECOND ROUNF (WHEN --missing PARAMETER IS PASSED)
-newmissingfile= config.newmissingfile
 
 BIOSDIR = config.BIOSDIR
 UNKDIR = config.UNKDIR
 
 cookies = cookielib.LWPCookieJar()
-
-arcadeSystems = []
-
-#arcadeSystems = ('75','142','56','151','6','7','8','196','35','47','49','54','55','56','68','69','112','147','148','149','150','151','152','153','154','155','156','157','158','159','160',
-#                 '161','162','163','164','165','166','167','168','169','170','173','174','175','176','177','178','179','180','181','182','183','184','185','186','187','188','189','190','191',
-#                 '192','193','194','195','196','209')
 
 class Game:
     ### THIS IS THE GAME CLASS, IT WILL HOLD INFORMATION OF EACH SCRAPED GAME
@@ -200,7 +185,6 @@ class Game:
         self.playcount = ''
         self.lastplayed = ''
         self.hash = jsondata['localhash']
-        isMissing(jsondata,self.path)
         logging.debug ('###### FINSIHED CREATING GAME INSTANCE')
 
     def getXML(self):
@@ -307,6 +291,14 @@ def getDBCursor(theDB):
             except Exception as e:
                 logging.error ('###### CANNOT RECONNECT TO DB '+str(e))
     return thiscursor
+
+def getArcadeSystems():
+    arcsys = []
+    arcadeSystemsQ = queryDB('SELECT id FROM systems WHERE TYPE=%s',('arcade',),False,mydb)
+    for arcadesys in arcadeSystemsQ[0]:
+        arcsys.append(str(arcadesys[0])) 
+    arcsys.append('75')
+    return arcsys
 
 def getGameName(jsondata,path):
     if 'noms' in jsondata['jeu']:
@@ -417,7 +409,7 @@ def parsePossibleErrors(response):
     if 'Error 5' in response:
         logging.error ('###### THERE IS A SERVER ERROR '+str(response))
         response = 'FAILED'
-    if ('urlopen error' in response.lower()):
+    if ('urlopen error' in response.lower()) or ('timed out' in response.lower()):
         logging.error ('###### THERE IS A MOMENTARY SERVER ERROR '+str(response))
         response = 'RETRY'
     return response
@@ -461,7 +453,8 @@ def doV2URLRequest(URL):
     request = urllib2.Request(URL)
     response = ''
     timeout = True
-    while timeout:
+    tries = 10
+    while timeout and tries > 0:
         try:
             response = urllib2.urlopen(request,timeout=60).read()
             ## TODO REMOVE
@@ -474,7 +467,13 @@ def doV2URLRequest(URL):
             if response != 'RETRY':
                 timeout = False
             else:
-                logging.error ('###### TIMED OUT - WILL RETRY')
+                tries = tries -1
+                if tries == 0:
+                    logging.error ('###### TOO MANY TIME OUTS, WILL GO TO NOT FOUND')
+                    response = 'NOT FOUND'
+                else:    
+                    logging.error ('###### TIMED OUT - WILL RETRY')
+                
         except Exception as e:
             logging.error ('###### OTHER ERROR IN CALLING URL '+str(e))
             response = str(e)
@@ -569,29 +568,6 @@ def callAPIURL(URL):
         logging.debug ('###### THIS IS NOT A V2 CALL ???? '+str(v2))
     return response
 
-def isMissing(json,file):
-    ### THIS FUNCTION WILL CHECK IF WE CAN CONSIDER FILE AS MISSING FROM THE SCRAPER SITE
-    logging.debug ('###### checking if '+file+' is missing')
-    try:
-        ## DO WE HAVE A GAME ID IN THE ANSWER?
-        if 'id' not in json['jeu'].keys():
-            ### NO WE DON'T, SO IT IS MISSING
-            logging.debug ('###### ID is NOT in KEYS')
-            ### IS THE SYSTEM ID IN THE ANSWER
-            if 'systemeid' in json.keys():
-                ### YES IT IS, ADD IT TO MISSING FILE
-                writeMissing(json['systemeid'],file)
-            else:
-                ### NO, SO WRITE SYSTEM AS UNKNOWN
-                writeMissing('UNKNOWN',file)
-        else:
-            logging.debug ('###### NOT MISSING, FOUND ALL INFO')
-
-    except Exception as e:
-        logging.error('###### GOT AN EXCEPTION '+str(e))
-        ### THERE WAS AN EXCEPTION, SO YEAH, LOG IT
-        writeMissing('EXCEPTED',file)
-
 def cleanMedia (directory,extension):
     ### THIS FUNCTION WILL GO INTO A DIRECTORY AND MATCH FILES WITH THE PASSED EXTENSION
     cands = []
@@ -626,28 +602,6 @@ def cleanMedia (directory,extension):
                         except Exception as e:
                             ### SOMETHING HAPPENED, LOG IT
                             logging.error ('###### COULD NOT CLEANUP '+str(e))
-    return
-
-def writeMissing(sysid,file):
-    ### THIS FUNCTION WRITES TO THE MISSING LIST
-    logging.debug ('###### ADDING FILE TO MISSING FILE')
-    try:
-        f=open(missingfile, "a+")
-        f.write(str(sysid)+'|'+str(file)+'|'+str(sha1(file))+'|'+str(md5(file))+'|'+str(crc(file))+'|'+str(os.stat(file).st_size/1024)+'\n')
-        f.close()
-    except Exception as e:
-        logging.error ('###### COULD NOT WRITE TO MISSING FILE '+str(e))
-    return
-
-def writeNewMissing(line):
-    ### WRITE TO THE SECOND ROUND OUTPUT FILE
-    logging.debug ('###### ADDING FILE TO MISSING FILE')
-    try:
-        f=open(newmissingfile, "a+")
-        f.write(line+'\n')
-        f.close()
-    except Exception as e:
-        logging.error ('###### COULD NOT WRITE TO NEW MISSING FILE '+str(e))
     return
 
 def getRating(json):
@@ -972,38 +926,32 @@ def addGameToList(gamelist, game):
     # Adds game to gamelist
     pass
 
-def compressVideo(destfile):
-    ##result = subprocess.call(['ffmpeg','-i',destfile,'-vcodec','libx265','-crf','20','-codec:a','libmp3lame','test.mp4'])
-    ## Delete old video and rename new file
-    return 0
-
 def grabVideo (URL,destfile,tout):
-    try:
         result = 1
         retries = 0
         while (result !=0) and (retries <10):
-            logging.debug ('###### ACTUALLY DOWNLOADING VIDEO '+str(URL))
+            logging.debug ('###### ACTUALLY DOWNLOADING VIDEO '+str(URL)+' ON TRY #'+str(retries+1))
             logging.debug ('###### COMMAND: wget --retry-connrefused --waitretry=1 --read-timeout=20 --timeout=15 --tries=5 -c -q '+str(URL)+' -O '+str(destfile))
-            result = subprocess.call(['wget','--retry-connrefused','--waitretry=1','--read-timeout=20','--timeout=15','--tries=5','-c','-q', URL, '-O', destfile])
+            try:
+                result = subprocess.call(['wget','--retry-connrefused','--waitretry=1','--read-timeout=20','--timeout=15','--tries=5','-c','-q', URL, '-O', destfile])
+            except Exception as e:
+                logging.error ('###### ERROR WGETTING VIDEO '+str(e))
             logging.debug ('###### VIDEO DOWNLOAD RESULT '+str(result))
             logging.debug ('###### FILE EXISTS '+str(os.path.isfile(destfile)))
             if not validateVideo(destfile):
-                if os.path.isfile(destffile):
+                if os.path.isfile(destfile):
                     os.remove(destfile)
-                logging.error ('###### DOWNLOAD IS TOO SMALL')
-                if 'clone.' in URL and 'screenscraper' in URL:
-                    URL = URL.replace ('clone.','www.')
+                logging.error ('###### VIDEO DOWNLOAD IS CORRUPTED SEE IF WE WERE ANONYMOUS')
+                if 'ssid=&sspassword' in URL and 'screenscraper' in URL:
+                    URL = URL.replace ('ssid=','ssid='+config.ssid[CURRSSID])
                 else:
                     if "screenscraper" in URL:
                         URL = URL.replace ('www.','clone.')
-                    if '/api/' in URL:
-                        logging.debug('###### API IS NOT WORKING, LET\'S TRY API2')
-                        URL = URL.replace ('/api/','/api2/')
                 result = -1
             retries = retries + 1
         logging.debug ('###### RESULT OF DOWNLOAD '+str(result))
         if result == -1:
-            logging.debug ('##### DOWNLOAD wget ' + URL + ' -o ' + destfile)
+            logging.error ('##### DOWNLOAD FAILED - TRY MANUALLY wget ' + URL + ' -O ' + destfile)
         if result == 0:
             return destfile
         else:
@@ -1013,8 +961,6 @@ def grabVideo (URL,destfile,tout):
             except:
                 logging.error ("##### CANNOT REMOVE FAILED DOWNLOAD")
             return ''
-        compressVideo (destfile)
-    except Exception as e:
         logging.error ('###### ERROR DOWNLOADING VIDEO '+URL+' '+str(e))
         return ''
 
@@ -1032,10 +978,14 @@ def validateImage(imagefile):
         return False
 
 def validateVideo(videofile):
+    logging.debug ("###### VALIDATING "+videofile)
     if os.path.islink(videofile):
         logging.debug ('###### IS A SYMLINK, SO ASSUME IT IS OK')
         return True
     try:
+        if os.stat(videofile).st_size == 0:
+            logging.debug ('###### VIDEO SIZE EQUALS ZERO')
+            return False
         fileInfo = MediaInfo.parse(videofile)
         for track in fileInfo.tracks:
             if track.track_type.upper() == "VIDEO":
@@ -1048,31 +998,30 @@ def validateVideo(videofile):
         return False
 
 def grabMedia(URL,destfile,tout):
-    try:
         result = 1
         retries = 0
         while (result !=0) and (retries <10):
-            result = subprocess.call(['wget','--retry-connrefused','--waitretry=1','--read-timeout=20','--timeout=15','-t','0','-c','-q', URL, '-O', destfile])
+            logging.debug ('###### WILL WGET MEDIA')
+            try:
+                result = subprocess.call(['wget','--retry-connrefused','--waitretry=1','--read-timeout=20','--timeout=15','-t','0','-c','-q', URL, '-O', destfile])
+            except Exception as e:
+                logging.error('###### CANNOT WGET MEDIA '+str(e))
             if not validateImage(destfile):
                 if os.path.isfile(destfile):
                     logging.debug('###### COULD NOT VALIDATE '+destfile+' SO I REMOVE IT')
                     os.remove(destfile)
-                if 'clone.' in URL and 'screenscraper' in URL:
-                    logging.debug('###### .CLONE IS NOT WORKING LET\'S TRY WWW.')
-                    URL = URL.replace ('clone.','www.')
+                if 'ssid=&sspassword' in URL and 'screenscraper' in URL:
+                    URL = URL.replace ('ssid=','ssid='+config.ssid[CURRSSID])
                 else:
                     if 'screenscraper' in URL:
                         logging.debug('###### .WWW IS NOT WORKING, LET\'S TRY CLONE.')
                         URL = URL.replace ('www.','clone.')
-                    if '/api/' in URL:
-                        logging.debug('###### API IS NOT WORKING, LET\'S TRY API2')
-                        URL = URL.replace ('/api/','/api2/')
                 logging.error ('###### DOWNLOAD IS CORRUPTED ON RETRY '+str(retries+1)+' URL '+str(URL))
                 result = -1
             retries = retries + 1
         logging.debug ('###### RESULT OF DOWNLOAD '+str(result))
         if result == -1:
-            logging.debug ('##### DOWNLOAD wget ' + URL + ' -o ' + destfile)
+            logging.error ('##### FAILED DOWNLOAD - TRY MANUALLY wget ' + URL + ' -O ' + destfile)
         if result == 0:
             return destfile
         else:
@@ -1082,130 +1031,46 @@ def grabMedia(URL,destfile,tout):
             except:
                 logging.error ("##### CANNOT REMOVE FAILED DOWNLOAD")
             return ''
-    except Exception as e:
-        logging.error ('###### ERROR GETTING MEDIA '+URL+' '+str(e))
-        return ''
 
-def getScreenshot(medialist,num):
-    if not isinstance (medialist,dict):
-        medialist = medialist[0]
-    if 'media_screenshot' in medialist.keys():
-        URL = medialist['media_screenshot']
-        if 'screenscraper' in URL:
-            mediaURL = URL.replace('clone.', 'www.')
-            #mediaURL = URL
-            mediaPos = mediaURL.find('mediaformat=')+12
-            mediaFormat = mediaURL[mediaPos:mediaPos+3]
-            if mediaFormat == '':
-                mediaFormat = '.png'
-            return grabMedia(mediaURL,tmpdir+'image'+str(num)+'.'+mediaFormat,60)
-        ##### URL Is not in screenscraper
-        else:
-            mediaFormat = URL[URL.rindex('.')+1:]
-            mediaURL = URL
-            return grabMedia(mediaURL,tmpdir+'image'+str(num)+'.'+mediaFormat,60)
-    else:
-         return ''
-
-
-def getBoxURL (list):
-    found = False
-    URL =''
-    for key,value in list.iteritems():
-        if not ('crc' in key or 'sha1' in key or 'md5' in key):
-            if '_eu' in key:
-                if value != None and value !='' and not found:
-                    URL = value
-                    found = True
-            else:
-                if not found:
-                    if value != None and value !='':
-                        URL = value
-                        found = True
-    return URL
-
-def getBezelURL (list):
-    found = False
-    URL =''
-    for key,value in list.iteritems():
-        if not ('crc' in key or 'sha1' in key or 'md5' in key):
-            if '_eu' in key:
-                if value != None and value !='' and not found:
-                    URL = value
-                    found = True
-            else:
-                if not found:
-                    if value != None and value !='':
-                        URL = value
-                        found = True
-    return URL
-
-
-def getBezel(medialist,syspath,name):
-    if str(type(medialist))=='<type \'list\'>':
-        medialist=dict(medialist[0])
-    logging.debug('####### TYPE OF MEDIALIST '+str(type(medialist)))
-    if 'media_bezels' in medialist.keys():
-        mediabezels = medialist['media_bezels']
-        logging.debug ('###### THERE ARE BEZELS FOR THIS FILE')
-        URL =''
-        if 'media_bezels16-9' in mediabezels.keys():
-            URL = getBezelURL(mediabezels['media_bezels16-9'])
-        if URL =='media_bezesl4-3' in mediabezels.keys():
-            URL = getBezelURL(mediabezels['media_bezels4-3'])
-        if URL != '':
-            logging.debug ('###### THERE IS AN URL FOR BEZEL')
+def getImage(medialist,num,imgtype):
+    logging.debug ('###### GOING TO GET SCREENSHOT '+str(medialist))
+    if not isinstance (medialist,list):
+        logging.debug ('###### MEDIA LIST IS NOT A LIST')
+        medialist = [medialist]
+        logging.debug ('###### MEDIA LIST IS A LIST NOW')
+    for media in medialist:
+        logging.debug ('###### MEDIA TYPE IS '+media['type'])
+        if media['type'].upper() == imgtype.upper():
+            URL = media['url']
+            mediaFormat = media['format']
             if 'screenscraper' in URL:
                 mediaURL = URL.replace('clone.', 'www.')
+                #mediaURL = URL
                 mediaPos = mediaURL.find('mediaformat=')+12
-                mediaFormat = mediaURL[mediaPos:mediaPos+3]
+                logging.debug ('###### GOING TO GRAB MEDIA '+mediaURL)
+                return grabMedia(mediaURL,tmpdir+'image'+str(num)+'.'+mediaFormat,60)
+        ##### URL Is not in screenscraper
             else:
-                mediaURL = URL
                 mediaFormat = URL[URL.rindex('.')+1:]
-            logging.debug ('###### DOWNLOADING BEZEL')
-            destpath = syspath.replace('roms','overlays')
-            destfile = destpath+'/bezel-'+str(name)+'.'+mediaFormat
-            logging.debug ('###### DESTINATION IS '+destfile)
-            if not os.path.isfile(destfile):
-                grabMedia(mediaURL,destfile,60)
-            return destfile
-        else:
-            return ''
-    else:
-        logging.debug ('##### THERE ARE NO BEZELS FOR THIS FILE')
-        return ''
-
-def getBoxArt(medialist,num):
-    if 'media_boxs' in medialist.keys():
-        mediaboxs = medialist['media_boxs']
-        URL =''
-        if 'media_boxs3d' in mediaboxs.keys():
-            URL = getBoxURL(mediaboxs['media_boxs3d'])
-        if URL =='' and 'media_boxs2d' in mediaboxs.keys():
-            URL = getBoxURL(mediaboxs['media_boxs2d'])
-        if 'screenscraper' in URL:
-            mediaURL = URL.replace('clone.', 'www.')
-            #mediaURL = URL
-            mediaPos = mediaURL.find('mediaformat=')+12
-            mediaFormat = mediaURL[mediaPos:mediaPos+3]
-            if mediaFormat == '':
-                mediaFormat = 'png'
-        else:
-            mediaURL = URL
-            mediaFormat = URL[URL.rindex('.')+1:]
-        logging.debug ('###### DOWNLADING BOX ART')
-        return grabMedia(mediaURL,tmpdir+'image'+str(num)+'.'+mediaFormat,60)
-    else:
-        return ''
+                mediaURL = URL
+                return grabMedia(mediaURL,tmpdir+'image'+str(num)+'.'+mediaFormat,60)
+    logging.debug ('###### NO IMAGE FOUND ')
+    return ''
 
 def doMediaDownload(medialist,destfile,path,hash):
     logging.debug ('###### DOWNLOADING MEDIA')
     if (not(os.path.isfile(destfile)) and ('images' in destfile)) or UPDATEDATA:
-        logging.debug('###### GOING TO DOWNLOAD SCREENSHOT')
-        img1 = getScreenshot(medialist,random.randint(0,10000))
+        logging.debug('###### GOING TO DOWNLOAD COMPOSITE SCREEN')
+        img1 = getImage(medialist,random.randint(0,10000),'mixrbv1')
+        if img1 <> '':  
+            logging.debug ('###### WE GOT A COMPOSITE')
+            os.rename(img1,destfile)
+            return
+        logging.debug ('###### NO COMPOSITE FOUND, CREATING ONE - DOWNLOADING SCREENSHOT')
+        img1 = getImage(medialist,random.randint(0,10000),'ss')
         if (img1 <> ''):
             logging.debug('###### GOING TO DOWNLOAD BOXART')
-            img2 = getBoxArt(medialist,random.randint(0,10000))
+            img2 = getImage(medialist,random.randint(0,10000),'box-3D')
             generateImage(img1,img2,destfile)
         else:
             logging.debug ('##### COULD NOT DOWNLOAD SCREENSHOT SO CANCELLING')
@@ -1220,49 +1085,57 @@ def doMediaDownload(medialist,destfile,path,hash):
 def processBezels(medialist,destfile,path,hash,zipname):
     logging.debug ('###### PROCESS BEZEL FOR '+zipname)
     logging.debug ('###### DOWNLOADING BEZELS '+str(medialist))
-    thisbezel = getBezel(medialist,path,hash)
-    logging.debug ('###### BEZEL DIRECTORY')
     bezeldir = path.replace('roms','overlays')
     if not os.path.exists(bezeldir):
         os.makedirs(bezeldir)
-    cfgdir = path
-    if thisbezel !='':
+    img = getImage(medialist,'99','bezel-16-9')
+    if img == '':
+        logging.debug ('###### THERE ARE NO BEZELS AVAILABLE FOR THIS FILE')
+        return ''
+    else:
+        destfile = bezeldir+'/bezel-'+str(hash)+img[img.rindex('.')-1:]
+        logging.debug ('###### DESTINATION FOR BEZEL IS '+destfile)
+        os.rename(img,destfile)
         zipname = zipname[zipname.rfind('/')+1:]
+        logging.debug ('###### ZIPNAME IS '+zipname)
         bezelcfg = path+'/'+zipname+'.cfg'
+        logging.debug ('###### BEZELCFG IS '+bezelcfg)
         bzlfile,bzlext = os.path.splitext (zipname)
         romcfg = bzlfile+'.cfg'
+        logging.debug ('###### ROMCFG IS '+romcfg)
         romcfgpath = bezeldir+'/'+romcfg
+        logging.debug ('###### ROMCFGPATH IS '+romcfgpath)
         #if not os.path.isfile(bezelcfg):
         f = open(bezelcfg, "w")
         f.write('input_overlay = "'+ bezeldir+'/'+romcfg+'"\n')
         f.close
         #if not os.path.isfile(romcfgpath):
         f = open(romcfgpath, "w")
-        f.write('overlays = "1"\noverlay0_overlay = "'+thisbezel+'"\noverlay0_full_screen = "true"\noverlay0_descs = "0"\n')
+        f.write('overlays = "1"\noverlay0_overlay = "'+destfile+'"\noverlay0_full_screen = "true"\noverlay0_descs = "0"\n')
         f.close
 
 def doVideoDownload(medialist,destfile):
-    if str(type(medialist))=='<type \'list\'>':
-        medialist=dict(medialist[0])
     logging.debug('####### TYPE OF MEDIALIST '+str(type(medialist)))
-    if 'media_video' in medialist.keys():
-        URL = medialist['media_video']
-        if 'screenscraper' in URL:
-            mediaURL = URL.replace('clone.', 'www.')
-        else:
-            mediaURL = URL
-        return grabVideo(mediaURL,destfile,120)
-    else:
-         return ''
+    for media in medialist:
+        logging.debug ('###### MEDIA TYPE IS '+media['type'])
+        if media['type'].upper() == 'VIDEO-NORMALIZED':
+            URL = media['url']
+            if 'screenscraper' in URL:
+                mediaURL = URL.replace('clone.', 'www.')
+            else:
+                mediaURL = URL
+            return grabVideo(mediaURL,destfile,120)
+    logging.debug ('###### THERE IS NO VIDEO FOR THIS FILE')
+    return ''
 
 def getVideo(medialist, path, file, hash):
     logging.debug ('###### STARTED GRABBING VIDEO PROCESS')
     destfile = ''
     logging.debug ('###### MEDIALIST IS '+str(medialist))
-    if medialist != '':
-        if not isinstance(medialist,dict):
-            logging.debug ('###### MEDIALIST NOT DICT SO TRYING TO GET IT '+str(medialist))
-            medialist=medialist[0]
+    if medialist != '' and len(medialist)>0:
+        if not isinstance(medialist,list):
+            logging.debug ('###### MEDIALIST NOT LIST SO TRYING CONVERT IT ')
+            medialist=[medialist]
         logging.debug('##### GRABBING VIDEO FOR ' + file)
         destfile = path+'/videos/'+hash+'-video.mp4'
         if os.path.isfile(destfile):
@@ -1286,7 +1159,7 @@ def getMedia(medialist, path, file, hash,zipname):
     logging.debug ('###### STARTING MEDIA DOWNLOAD PROCESS')
     #logging.debug ('###### THIS IS THE MEDIALIST ' + str(medialist))
     destfile = ''
-    if medialist != '':
+    if medialist != '' and len(medialist)>0:
         logging.debug('##### GRABBING FOR ' + file)
         destfile = path+'/images/'+hash+'-image.png'
         if os.path.isfile(destfile):
@@ -1855,8 +1728,8 @@ def grabData(system, path, CURRSSID, acceptedExtens):
                 ### NO, SO JUST INFORM WE COULDN'T
                 logging.info('##### COULD NOT SCRAPE ' + procfile + ' ')
         else:
-             ### NO, INFORM WE HAD AN ISSUE
-             logging.info('##### COULD NOT SCRAPE ' + procfile + ' ')
+            ### NO, INFORM WE HAD AN ISSUE
+            logging.info('##### COULD NOT SCRAPE ' + procfile + ' ')
         ### GO TO NEXT USER ID
         CURRSSID = CURRSSID + 1
         if CURRSSID == len(config.ssid):
@@ -1996,17 +1869,21 @@ def locateShainDB(mysha1='None',mymd5='None',mycrc='None',filename='',sysid=0,pa
         ###### NEED TO vREPLACE EOL CHARACRTES WITH DOUBLE BACKSLASH ESCAPED EQUIVALENT FOR DICT CONVERSION TO WORK
         result = result.replace('\x0d\x0a','\\r\\n').replace('\x0a','').replace('\x09','').replace('\x0b','').replace('  ','').replace('\r','')
         logging.debug ('###### WE DID FIND SOMETHING '+repr(result))
-        try:
-            logging.debug ('###### CONVERTING VIA JSON')
-            myres = json.loads(result)
-        except Exception as e:
-            logging.error ('###### CANNOT CONVERT VIA JSON - CONVERTING VIA AST '+str(e))
+        if '{"jeu":{"id":"0",' in result:
+            logging.debug ('###### ID 0 FOUND, GOING BACK TO EMPTY')
+            myres = ''
+        else:
             try:
-                myres = ast.literal_eval(result)
+                logging.debug ('###### CONVERTING VIA JSON')
+                myres = json.loads(result)
             except Exception as e:
-                logging.error ('###### CANNOT CONVERT VIA AST '+str(e)+' RETURNING NOTHING '+str(result))
-                return ''
-        logging.debug ('###### GOT A RESULT AND I\'M RETURNING IT')
+                logging.error ('###### CANNOT CONVERT VIA JSON - CONVERTING VIA AST '+str(e))
+                try:
+                    myres = ast.literal_eval(result)
+                except Exception as e:
+                    logging.error ('###### CANNOT CONVERT VIA AST '+str(e)+' RETURNING NOTHING '+str(result))
+                    return ''
+            logging.debug ('###### GOT A RESULT AND I\'M RETURNING IT')
         return myres
     else:
         isArcade = isArcadeSystem(sysid)
@@ -2099,165 +1976,41 @@ def getGameInfo(CURRSSID, pathtofile, file, mymd5, mysha1, mycrc, sysid):
     response = locateShainDB(mysha1,mymd5,mycrc,file,sysid,pathtofile)
     ###logging.info ('######## '+str(response))
     ### DID WE SOMEHOW GOT AN EMPTY RESPONSE?
-    if response !='':
+    if response=='' or response == None:
+        ### THERE IS AN EMPTY RESPONSE BACK FROM LOOKUP, THIS GAME CANNOT BE FOUND, CREATE EMPTY
+        response = dict()
+        response['jeu']=dict()
+        response['jeu']['noms']=[{"region":"ss","text":file}]
+        response['jeu']['synopsis']=[{"langue":"en","text":"There is no description for this game"}]
+        response['jeu']['medias']=[]
+        response['jeu']['dates']=[]
+        response['jeu']['id']='0'        
+    else:
         ### WE DID GET A RESPONSE
         ### THIS VARIABLE INDICATES IF WE NEED TO UPDATE THE DB OR NOT, BY DEFAULT WE DO
         doupdate = True
         ### CHECK IF WE HAVE A SYSTEM ID IN THE RESPONSE
         ### DID WE GET A QUOTA LIMIT?
-        if response == 'QUOTA':
+        if response == 'QUOTA' or response =='ERROR':
             ### YES, SO RETURN TO SKIP THE FILE IF POSSIBLE
-            logging.info ('###### QUOTA LIMIT DONE RETURNED BY API')
-            return file, response
-        if response == 'ERROR':
-            ### YES, SO RETURN TO SKIP THE FILE IF POSSIBLE
-            logging.info ('###### ERROR RETURNED BY API')
+            logging.info ('###### '+response+' RETURNED BY API')
             return file, response
         ### DID THE SCRAPER RETURN A VALID ROM?
         ### USUALLY IN A VALID RESPONSE WE WOULD HAVE THE JEU KEY
         ### AND OF COURSE THE ANSWER WILL NOT BE EMPTY
         logging.debug ('####### RESPONSE '+str(response))
-        if response and not ('jeu' in response) and (response!=''):
+        if not 'jeu' in response:
+            logging.debug('###### GOT A WEIRD ANSWER')
+            return file,response
+        else:
             if not isinstance(response,dict):
                 logging.debug ('###### RESPONSE IS A STRING - CONVERTING')
                 response = ast.literal_eval(response)
-            #YES WE DID
-            logging.info ('###### GAME INFO WAS NOT PRESENT FOR ROM')
-            ### ONE OF THE FEATURES OF THE SCRAPER IS TO ALLOW YOU TO ASSIGN GAME ID'S TO RECORDS IN DB, WHICH WOULD
-            ### BE SCRAPPED IN A SECOND RUN, THIS ALLOWS FOR ROMS THAT ARE NOT IN THE SITE BUT YOU KNOW OF TO BE SCRAPPED
-            ### SO, DO WE HAVE A GAME ID?
-            logging.debug (str(response))
-            if not 'GameID' in response:
-                ### NO WE DON'T SO WE ADD IT AS 0 SO YOU CAN REPLACE IT AFTERWARDS IN THE DB
-                response['GameID']='0'
-                logging.debug ('###### SETTING DE FACTO SYSTEM ID')
-                response['systemeid']=int(sysid)
-                ### AND WE UPDATE THE DB WITH THE RESULT (REGARDLESS IF IT WAS IN THE DB OR NOT PREVIOUSLY)
-                updateDB (mysha1,response)
-                ### INFORM LOG THAT YOU COULD EVENTUALLY UPDATE GAMEID
-                logging.debug ('###### YOU CAN UPDATE GAME ID FOR '+file)
-                ### AND RETURN RESPONSE
-                return file,response
-            else:
-                ### YES WE GOT A GAME ID
-                logging.debug ('###### GOT A GAME ID FROM DB '+str(response))
-                ### SO NOW INITIALIZE GAME PARAMETERS FOR NEW SEARCH , FIRST EMPTY THEN ASSIGN, JUST IN CASE
-                gameparams = None
-                gameparams = dict(fixParams)
-                ### OK, WE GOT A GAME ID, BUT IS IT 0?
-                if response['GameID'] !='0':
-                    ### NO IT IS NOT, SO WE CAN GO AHEAD AND GET IT
-                    logging.debug ('###### CALLING API WITH GAME_ID'+response['GameID'])
-                    ### ADD GAMEID TO PARAMETERS
-                    gameparams['gameid'] = response['GameID']
-                    ### AND GET THE RESPONSE TO THE CALL
-                    newresponse = callAPI(fixedURL,API,gameparams,CURRSSID,'2','THERE IS A GAME ID HERE')
-                    ### CHECK IF WE WENT OVER QUOTA
-                    if newresponse == 'QUOTA':
-                        logging.debug ('###### QUOTA DONE')
-                        return file, newresponse
-                    ### SO, DID WE GET A PROPER RESPONSE? (REMEMBER JEU NEEDS TO BE THERE)
-                    if 'jeu' in newresponse:
-                        ### YES WE DID
-                        logging.debug ('#### JEU IS IN RESPONSE')
-                        ### ASSIGN NEW RESPONSE TO OLD ONE, SO WE DO NOT CONFUSE OURSELVES
-                        response = None
-                        response = newresponse
-                        ### AND UPDATE THE DB WITH THE NEW ANSWER
-                        #logging.debug ('###### RESPONSE TO UPDATE '+str(response))
-                        ## updateDB (mysha1,response)
-                        ### AND SINCE WE GOT A PROPER ANSWER (AND NEW) WE DO NOT HAVE TO UPDATE THE CALL
-                        doupdate = False
-                    else:
-                        ### NO IT WAS NOT A PROPER ANSWER
-                        logging.debug ('###### JEU NOT IN RESPONSE')
-                        ### RETURN WHATEVER WE GOT
-                        return file,newresponse
-        ### HERE WE CHECK IF IT HAS BEEN REQUESTED TO UPDATE DATA FROM SCRAPER OR NOT
-        if UPDATEDATA and 'jeu' in response and doupdate:
-            ### UPDATE DATA IN DB BY FETCHING API AGAIN
-            logging.debug ('###### TRYING TO UPDATE CACHE DATA')
-            ### WE INITIALIZE THE FIXED PARAMETERS
-            gameparams = None
-            gameparams = dict(fixParams)
-            ### AND WE ADD THE GAME ID, WHICH WE SHOULD HAVE. THIS IS TO AVOID TRYING TO UPDATE CHECKSUMS THAT ARE NOT EXISTING IN SITE
-            # MODIFY HERE MODIFY HERE
-            gameparams['gameid'] = response['jeu']['id']
-            ### AND WE CALL THE API
-            newresponse = None
-            newresponse = callAPI(fixedURL,API,gameparams,CURRSSID,'2','FROM UPDATEDATA')
-            ### ARE WE OVER THE ALLOWED QUOTA?
-            if newresponse == 'QUOTA':
-                ### YES
-                logging.info ('###### QUOTA DONE')
-                return file, newresponse
-            ### DID WE GET A VALID RESPONSE??? (REMMEBER JEU)
-            if 'jeu' in newresponse:
                 ### YES WE DID
-                response = None
-                response = newresponse
-                logging.debug ('###### GOT UPDATED VERSION FROM API')
-                #logging.debug ('###### RESPONSE TO UPDATE '+str(response))
-                updateDB (mysha1,response)
+            logging.debug ('#### JEU IS IN RESPONSE')
+            ### ASSIGN NEW RESPONSE TO OLD ONE, SO WE DO NOT CONFUSE OURSELVES
+            if not UPDATEDATA:
                 return file,response
-        else:
-            logging.debug ('####### WE GOT AN OK RESPONSE SO RETURNING IT')
-            return file,response
-    else:
-        ### WE COULD NOT LOCATE THE SHA IN DB
-        logging.error('###### CACHE DOES NOT EXISTE IN DB FOR ' + file)
-        logging.debug('###### CALLING API IN NORMAL MODE')
-        ### CALL THE API TO GET AN ANSWER
-        response = None
-        response = callAPI(fixedURL, API, params, CURRSSID,'2','NO SHA IN DB')
-        ### ARE WE OVER THE QUOTA?
-        if response == 'QUOTA':
-            ## IMPOSSIBLE TO DO CALLS
-            return file, response
-        ### DID WE GET A PROPER ANSWER? (JEU)
-        logging.debug ('###### THE RESPONSE SO FAR '+str(response))
-        if response =='ERROR' :
-            ### NO WE DID NOT, ADD LOCAL VALUES
-            response = dict()
-            response['file'] = pathtofile.replace("'","\'")
-            response['localhash'] = mysha1
-            response['GameID'] = '0'
-            response['systemeid'] = str(sysid)
-            #logging.debug ('###### RESPONSE TO UPDATE '+str(response))
-            updateDB (mysha1,response)
-        else:
-            logging.debug ('###### GOT ANSWER FROM API, UPDATING DB')
-            #logging.debug ('###### RESPONSE TO UPDATE '+str(response))
-            #updateDB (mysha1,response)
-    ### SO NOW WE HAVE A RESPONSE, LET'S TREAT IT
-    ### WE ASSUME THE ROM WAS NOT FOUND
-    foundRom = False
-    ### IS THERE AN ERROR IN RESPONSE?
-    logging.debug ('###### RESPONSE IS '+str(response))
-    if response == 'QUOTA':
-        logging.error ('###### GONE OVER QUOTA')
-        return file,response
-    if (response == 'ERROR') or (response == 'NOT FOUND'):
-        ### YES THERE IS
-        logging.debug('###### API GAVE ERROR BACK, CREATING EMPTY DATA '+str(response))
-        ### SO WE CREATE AN EMPTY ANSWER AND RETURN IT
-        return file,{'abspath': pathtofile,
-                'localpath': pathtofile+'/'+file,
-                'localhash': mysha1.upper(),
-                'jeu':
-                {
-                'nom': file,
-                'synopsis': '',
-                'medias': '',
-                'dates': '',
-                'systemeid':sysid
-                }
-                }
-    ## SO NOW WE HAVE A PROPER ANSER TO RETURN`, BUT WE ADD THE LOCAL VALUES
-    response['localpath'] = pathtofile+'/'+escapeFileName(file)
-    response['localhash'] = mysha1.upper()
-    response['abspath'] = pathtofile
-    ### AND RETURN IT
     return file,response
 
 def getSystemName (sysid):
@@ -2426,7 +2179,7 @@ def scrapeRoms(CURRSSID,sortRoms=False,outdir=''):
         tree.parse(xml_file)
     ### GET ALL SYSTEMS IN THE CONFIG FILE
     systems = getAllSystems(CURRSSID)
-    if sortRoms == True:
+    if sortRoms:
         newSystems = []
     ### CHECK IF WE HAVE SYSTEMS OR NOT
     if systems == '':
@@ -2446,13 +2199,18 @@ def scrapeRoms(CURRSSID,sortRoms=False,outdir=''):
                 systemname = 'unknown'
                 ### INITIALIZE VARIABLE
                 path = ''
-                ### INITIALIZE VARIABLE
+                ### INITIALIZE VARIABLES
                 sysname ='unknown'
+                syscmd = ''
+                sysplat = ''
+                systheme = ''
                 ### ITERATE THROU CHILD TAGS OF SYSTEM
                 for system in child:
+                    ##logging.debug('****** '+str(system.tag)+' **** '+str(system.text))
                     if system.tag == 'command':
                         try:
                             ### CREATE A LIST WITH ALL VALID EXTENSIONS (USUALLY THE EXTENSIONS ARE SEPARATED BY A SPACE IN THE CONFIG FILE)
+                            logging.debug ('###### COMMAND FOUND '+system.text)
                             syscmd = system.text
                         except:
                             ### IF WE CANNOT GET A LIST OF EXTENSIONS FOR A SYSTEM WE DEFAULT TO 'ZIP'
@@ -2519,13 +2277,16 @@ def scrapeRoms(CURRSSID,sortRoms=False,outdir=''):
                     ### SO WE START WITH THE SYSTEM PROCESSING
                     if sortRoms :
                         fetchedSystems = copyRoms (systemid,systemname,path,CURRSSID,extensions,outdir)
-                        
                         for fsys in fetchedSystems:
+                            logging.debug ('###### COMPLETING FOUND SYSTEM '+fsys['name'])
+                            logging.debug ('###### COMMAND '+str(syscmd))
                             fsys['command']=syscmd
+                            logging.debug ('###### PLATFORM '+str(sysplat))
                             fsys['platform']=sysplat
+                            logging.debug ('###### THEME '+str(systheme))
                             fsys['theme']=systheme
                             logging.debug ('###### ADDING FOUND SYSTEMS TO EXISTING ONES')
-                            if fsys not in newSystems:
+                            if fsys not in newSystems and fsys['name'].upper() != 'UNKNOWN':
                                 newSystems.append(fsys)      
                     else:
                         grabData(systemid, path, CURRSSID,extensions)
@@ -2540,17 +2301,6 @@ def scrapeRoms(CURRSSID,sortRoms=False,outdir=''):
     logging.info ('----------------- ALL DONE -------------------')
     if sortRoms:
         return newSystems
-
-def updateGameID (file,sha,gameid):
-    if gameid != '':
-        logging.info ('###### UPDATING GAME ID IN DB FOR '+sha+' WITH VALUE '+str(gameid))
-        response = "{'localhash': '"+sha+"', 'GameID': '"+str(gameid)+"', 'file': '"+file.replace("'","\\\'")+"', 'Error': 'Erreur : Rom/Iso/Dossier non trouvee ! - UPDATED '}"
-    else:
-        logging.info ('###### ID TO UPDATE IS EMPTY, SO WILL BE THE DB')
-        response = ''
-    #logging.debug ('###### RESPONSE TO UPDATE '+str(response))
-    updateDB(sha,response)
-
 
 def transformFilename(fileName):
     logging.debug ('###### RECEIVED ORIGINAL FILENAME '+fileName)
@@ -2782,188 +2532,6 @@ def deleteFile (file):
     except Exception as e:
         logging.error ('##### COULD NOT DELETE FILE '+file)
 
-def isSystemOk(jsonsys,gamesys):
-    if jsonsys == gamesys:
-        logging.debug ('###### SYSTEMS ARE IDENTICAL')
-        return True
-    msxsystems = ('113','118','116','117')
-    if jsonsys in msxsystems and gamesys in msxsystems:
-        return True
-    if jsonsys in arcadeSystems and gamesys in arcadeSystems:
-        return True
-    return False
-
-def findMissing():
-    ### GET ALL SYSTEMS, THIS IS DONE TO HAVE A LIST OF ARCADE RELATED SYSTEMS
-    systems = getAllSystems(CURRSSID)
-     ### read missing file and try to get game by name
-    matchPercent = 95
-    if not os.path.isfile(missing):
-        logging.error('####### COULD NOT FIND FILE '+str(missing)+' STOPPING EXECUTION')
-        sys.exit()
-    with open(missing) as csv_file:
-        csv_reader = csv.reader(csv_file, delimiter='|')
-        line_count = 0
-        newGameId = 0
-        for row in csv_reader:
-            newline =''
-            ### clean previous done
-            ### CHECK IF THERE IS A SEVENTH COLUMN, WHICH WOULD BE THE GAMEID TO INSERT
-            newmode = False
-            sha = str(row[2])
-            try:
-                logging.debug ('###### LOOKING IF THERE IS SOMETHING TO DO')
-                whattodo = str(row[6]).upper()
-                newmode = True
-                logging.debug ('###### FOUND SOMETHING TO DO '+whattodo)
-                if whattodo=='BIOS':
-                    fname = row[1][row[1].rfind('/')+1:]
-                    logging.info('###### MOVING TO BIOS '+fname)
-                    try:
-                        subprocess.call(['mv', row[1], BIOSDIR + '/' + fname])
-                    except:
-                        logging.error ('###### COULD NOT MOVE '+row[1])
-                if whattodo=='UNKNOWN':
-                    logging.info('###### ASKED TO UNKNOWN '+row[1])
-                    fname = row[1][row[1].rfind('/')+1:]
-                    try:
-                        subprocess.call(['mv', row[1], UNKDIR + '/' + fname])
-                    except:
-                        logging.error ('###### COULD NOT MOVE '+row[1])
-                if whattodo=='DELETE':
-                    logging.info('###### ASKED TO DELETE '+row[1])
-                    try:
-                        deleteFile(row[1])
-                    except:
-                        logging.error ('###### COULD NOT DELETE '+row[1])
-                else:
-                    try:
-                        newGameId = int(whattodo)
-                    except:
-                        newGameId = 0
-                    logging.debug ('###### FOUND A FORCED GAME ID IN THE FILE '+str(newGameId))
-            except Exception as e:
-                logging.error('###### ERROR DETECTING NEW MODE '+str(e))
-                newGameId = 0
-                newmode = False
-            ### WE DO NOT HAVE A GAME ID, SO WE HAVE TO SEARCH FOR IT
-            logging.info('###### IS THIS A NEW MODE '+str(newmode)+' --- New Game ID = '+str(newGameId))
-            if newGameId == 0 and not newmode:
-                updateGameID (row[1],sha,'0')
-                newline = row[0]+'|'+row[1]+'|'+sha+'|'+row[3]+'|'+row[4]+'|'+row[5]+'|FORCED_ID'
-                system=row[0]
-                logging.debug ('###### DOING RESEARCH FOR '+row[1]+' IN SYSTEM '+str(system))
-                if str(system) not in arcadeSystems:
-                    searchSystems=[system]
-                    filename=(row[1][row[1].rfind('/')+1:row[1].rfind('.')]).replace('_',' ')
-                    ### GBA Exception
-                    #if str(system) == '12':
-                    #    filename = filename[7:]
-                else:
-                    filename=row[1][row[1].rfind('/')+1:row[1].rfind('.')]
-                    filename = getArcadeName(filename)
-                    if filename == '':
-                        filename = 'UNKNOWN'
-                    newline = newline +'|'+filename
-                    searchSystems = system
-                logging.debug ('###### WILL SEARCH IN '+str(searchSystems))
-                myGameName = transformFilename(filename)
-                if myGameName !='':
-                    myParams = None
-                    myParams = dict(fixParams)
-                    logging.info ('###### STRIPPED TO '+myGameName)
-                    keepon = True
-                    found = False
-                    API= 'jeuRecherche'
-                    full = True
-                    returnValue = {}
-                    ### TODO: VERIFY SPLITS THINGS AND FINAL NAMES
-                    tries = 3
-                    while tries > 0 and not found:
-                        ## Try with whole name first, if not with partial
-                        if tries == 1:
-                            gameSearch = myGameName.replace(' - ',' ').replace(':','').split(' ')[0]
-                        else:
-                            gameSearch = myGameName
-                        if tries == 2:
-                            gameSearch = replace_roman_numerals(gameSearch)
-                        logging.debug('####### LENGTH OF GAMESEARCH IS '+str(len(gameSearch))+'='+str(gameSearch))
-                        if len(gameSearch)<4 and tries == 1:
-                            try:
-                                gameSearch = gameSearch+' '+myGameName.split(' ')[1] #SI son menos de 3 caracteres anado segunda palabra
-                            except:
-                                logging.error ('###### IMPOSSIBLE TO LOOK UP '+gameSearch+', IT HAS LESS THAN 4 CHARACTERS WHICH IS THE MINIMUM NEEDED')
-                            logging.debug('####### LENGTH OF GAMESEARCH IS '+str(len(gameSearch)))
-                            if len(gameSearch)<8:
-                                try:
-                                    gameSearch = gameSearch+' '+myGameName.split(' ')[2] #SI son menos de 3 caracteres anado segunda palabra
-                                except:
-                                    logging.error ('###### IMPOSSIBLE TO LOOK UP '+gameSearch+', IT HAS LESS THAN 7 CHARACTERS IN 2 WORDS WHICH IS THE MINIMUM NEEDED')
-                        gameSearch=gameSearch.replace(',','')
-                        myParams['recherche']=gameSearch
-                        if myParams['recherche'].upper() == 'EAMON':
-                                myParams['recherche']=myParams['recherche']+' '+myGameName.split(' ')[1]
-                                logging.debug ('###### THIS IS A EAMON GAME - SO I COMPLETE THE NAME '+myParams['recherche'])
-                        found = False
-                        systemPos = 0
-                        myParams['systemeid']=str(system)
-                        ## VOY A BUSCAR LOS TRES PRMEROS CARACTERES, Y DESPUES HACER UNA LOGICA EN EL MATCH DE CUANTOS CARACTERES IGUALES HAY, NO LOS 4 PRIMEROS
-                        logging.debug ('###### LOOKING SCRAPER FOR '+myParams['recherche']+ ' FOR SYSTEM '+str(system))
-                        returnValue = callAPI(fixedURL,API,myParams,0,'2',' SYSTEM SOMETHING')
-                        logging.debug (returnValue)
-                        if 'jeux' in returnValue.keys():
-                            if len(returnValue['jeux']) > 1:
-                                position = 0
-                                for game in returnValue['jeux']:
-                                    logging.debug ('###### TRYING WITH GAME IN POSITION ['+str(position)+'] OF ['+str(len(returnValue['jeux']))+']')
-                                    thisGameID = returnValue['jeux'][position]['id']
-                                    if gameNameMatches(myGameName,game):
-                                        if isSystemOk(game['systeme']['id'],str(system)):
-                                            updateGameID (row[1],sha,thisGameID)
-                                            found = True
-                                            continue
-                                        else:
-                                            logging.debug ('###### FOUND MATCH NOT OF SAME SYSTEM')
-                                    if not found:
-                                    	for gameName in game['noms']:
-                                            if isSystemOk(game['systeme']['id'],str(system)):
-                                                newline = newline + '|' + gameName['text']
-                                                newline = newline + '|' + thisGameID
-                                            else:
-                                                logging.debug ('###### RETURNED VALUE NOT OF SAME SYSTEM')
-                                    position = position + 1
- 
-                            else:
-                                if str(returnValue['jeux'][0]) != '{}':
-                                    game = returnValue['jeux'][0]
-                                    thisGameID = returnValue['jeux'][0]['id']
-                                    if gameNameMatches(myGameName,game):
-                                        if isSystemOk(game['systeme']['id'],str(system)):
-                                            updateGameID (row[1],sha,thisGameID)
-                                            found = True
-                                            logging.debug ('###### FOUND MISSING INFO FOR '+filename+' SHA '+sha)
-                                        else:
-                                            logging.debug ('###### MATCH NOT OF SAME SYSTEM')
-                                    else:
-                                        for gameName in game['noms']:
-                                            if isSystemOk(game['systeme']['id'],str(system)):
-                                                newline = newline + '|' + gameName['text']
-                                                newline = newline + '|' + thisGameID
-                                            else:
-                                                logging.debug ('###### RETURNED VALUE NOT OF SAME SYSTEM')
-                        tries = tries - 1
-                    if not found:
-                        logging.info ('###### COULD NOT FIND MISSING INFO FOR '+filename)
-                        writeNewMissing(newline)
-                else:
-                    logging.info ('###### COULD NOT FIND MISSING INFO FOR '+filename)
-                    writeNewMissing(newline)
-            else:
-                if newGameId !=0:
-                    updateGameID (row[1],sha,newGameId)
-                logging.info ('###### UPDATED FORCED ID OF '+row[1]+' TO '+str(newGameId))
-        logging.info ('###### FINISHED LOOKING FOR MISSING ROMS')
-
 def cleanGameList(path):
     with open(path, 'r') as xml_file:
         tree = ET.ElementTree()
@@ -3102,7 +2670,6 @@ def updateFile(path,localSHA,localCRC,localMD):
                     os.rename(path,destFile)
                 except:
                     res = updateDBFile(destFile,path)
-
 
 def lookUpROMinDB (romsha1,romcrc,rommd5):
     ### LOOKUP ROM IN DB FIRST
@@ -3460,15 +3027,6 @@ if cleanSystem:
     cleanSys(cleanSystem)
     sys.exit(0)
 
-if missing !='':
-    ### FIND MISSING FILES FROM MISSING FILES
-    ### THIS PROCEDURE OPENS A CSV FILE CONTAINING SYSTEM_ID,FILENAME,SHA,MD5,CRC
-    ### IT WILL THEN TRY TO MATCH FILENAMES WITH GAME NAMES AND ADD GAME_ID IF FOUND TO DB
-    findMissing()
-    logging.info ('###### FINSHED LOOKING FOR MISSING GAMES')
-    ##sys.exit(0)
-    scrapeRoms(CURRSSID)
-
 def createEsConfig(systems,dir):
     if dir[-1:] != '/':
         dir = dir +'/'
@@ -3486,11 +3044,10 @@ def createEsConfig(systems,dir):
     return 
 
 
+
+arcadeSystems = getArcadeSystems()
+
 if sortroms !='':
-    arcadeSystemsQ = queryDB('SELECT id FROM systems WHERE TYPE=%s',('arcade',),False,mydb)
-    for arcadesys in arcadeSystemsQ[0]:
-        arcadeSystems.append(str(arcadesys[0]))
-    arcadeSystems.append('75')
     logging.debug ('###### ARCADE SYSTEMS '+str(arcadeSystems))
     ### SORT YOUR ROMS, IT WILL TAKE YOUR PARAMETER AS DESTINATION DIRECTORY AND CREATE A STRUCTURE
     ### BASED ON THE SYSTEM THE ROM BELONGS TO

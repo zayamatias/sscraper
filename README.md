@@ -32,11 +32,11 @@ By default, running the script 'python sscraper.py' will:
 - It will look inside compressed files in case there is no match in screenscraper (and check again with hashes for extracted file)
 - It will delete and rebuild a new gamelist.xml file, so any addition you have done to this fie manually will be deleted.
 - It will add the (disk x) or (disc X) or (side x) or (tape x) information found in the filename to the game name.
-- It will download video and images (will compose the background + 3dBox if both are found) and verify their integrity
+- It will download video and images (will compose the background + 3dBox if both are found and there is no composite present in screenscraper) and verify their integrity
 - It will download bezels and create the configuration files (tested only for RetroPie)
 - It will create symlinks for duplicate images and videos in order to save space
-- it will create a missing csv file (pipe delimited), with a list of roms that could not be found in screenscraper.fr
 - If your daily quota is done, it will switch to anonymous mode and if this mode is disabled by screenscraper.fr then it will pause until the next day quota is reset
+- It will store all information in the local DB so you save precious scraping quota
 
 ## Missing Mode
 
@@ -60,7 +60,7 @@ The switch '--rename' will fetch all games in the local DB, and try to rename fi
 
 ## Clone DB mode
 
-Try --startid (game_id of choice) to start download game information into the local DB starting from game_id, data will be stored locally so you would still be able to scrap roms regardless if the site is down or your quota is over. Of coure, this is a super lengthy process that can take several days depending on your quota limits.
+Try --startid (game_id of choice) to start download game information into the local DB starting from game_id, data will be stored locally so you would still be able to scrap roms regardless if the site is down or your quota is over. Of coure, this is a super lengthy process that can take several days depending on your quota limits, connecion, etc...
 
 ## Sort Mode
 

@@ -40,33 +40,7 @@ By default, running the script 'python sscraper.py' will:
 
 ## Missing Mode
 
-After the first run, you can re-execute the script with the `--missing filename.csv` parameter.
-
-Each line in this file looks something like:
-
->76|/home/pi/RetroPie/roms/zxspectrum/Fred_(1984)(Investronica)(ES).zip|19b2100571c72e0e9e593723e7a2de4674e7ba84|d8cc135d5b793bf39819597fbb8ed3f2|7C749EFC|13
-
-Where columns are:
-
-System id in screenscraper | Full path to the file | SHA1 | MD5 | CRC | Size in Kb
-
-What will happen:
-
-- Script will read the missing file line by line and try to get the rom_id from screenscraper.fr based on name search
-- If a confident match is found, it will update the Game_ID in the local DB to the Game_ID in screenscraper [The closer the filename to the game name in screenscraper, there will be more possibilities to find the proper game]
-- If no confident match is found, all close matches will be added in a newmissing csv file
-- After all lines are done, a full scrape will be launched, grabbing the information for the roms where the Game_ID was found (IT WILL RE RUN A FULL SYSTEM SCAN).
-- For certain specific systems (arcade) since rom names are usually shorter versions, it will go to'http://www.mamedb.com/' and 'http://adb.arcadeitalia.net' to try and get the full name
-
-The newmissing file structure is like this:
-
->113|/home/pi/RetroPie/roms/msx/Game_Over_II_(1988)(Dinamic_Software)(ES)(Side_A)[re-release_of_Phantis][RUN_CAS-_].zip|0f3e53ef7143a3fa9446ccce7678044bdbbac77d|f5b8e7b4a52fec3ab8235d44210864fa|DF901375	27|FORCED_ID|Game Land|95366|Game Master|95367|Game Master 2|95368|Game World - 126 Games|95372|Golf Game|95428|Chess Game The|96955|Pinball Game|97106|Msx Shogi Game|109059|Game Over|176884|Game Over|176884|Phantis - Game Over 2|185418|Game Over|176884	Phantis - Game Over 2|185418
-
-Format is similar to the original missing file, but this time it will add a 'FORCE_ID' column and then a 'Game Name' column and 'Game ID' column per match returned by screenscraper.fr.
-
-You will have the opportunity to manually update this file to replace the FORCE_ID field with the field you consider the correct one. You can also replace the FORCE_ID by DELETE to delete the file, UNKNOWN to move it to the unknown directory (see config.py file) or BIOS to move it to the bios directory (again, see config.py file)
-
-If you run the --missing parameter with your modified file, it will update the GAME_ID in the local DB with the ID you replaced in the FORCE_ID field and then re-run a full scan.
+There is no need for missing mode anymore, the scraper will go through all the games in the local DB to find the correct ones. If you want to link one of the unknown roms to the game, just update the gameID in the DB for that rom (selecting all roms with gameid=0 will return all unlinked roms)
 
 ## Update Mode
 

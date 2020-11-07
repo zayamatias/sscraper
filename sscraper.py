@@ -926,7 +926,8 @@ def addGameToList(gamelist, game):
     # Adds game to gamelist
     pass
 
-def grabVideo (URL,destfile,tout):
+def grabVideo (URL,destfile):
+        logging.error ('###### ACTUALLY GOING TO DOWNLOAD VIDEO '+destfile)
         result = 1
         retries = 0
         while (result !=0) and (retries <10):
@@ -997,7 +998,8 @@ def validateVideo(videofile):
         logging.error ('##### COULD NOT VALIDATE VIDEO '+str(e))
         return False
 
-def grabMedia(URL,destfile,tout):
+def grabMedia(URL,destfile):
+        logging.debug ('###### ACTUALLY GOING TO GRAB MEDIA '+destfile)
         result = 1
         retries = 0
         while (result !=0) and (retries <10):
@@ -1041,26 +1043,19 @@ def getImage(medialist,num,imgtype):
     for media in medialist:
         logging.debug ('###### MEDIA TYPE IS '+media['type'])
         if media['type'].upper() == imgtype.upper():
-            URL = media['url']
-            mediaFormat = media['format']
-            if 'screenscraper' in URL:
-                mediaURL = URL.replace('clone.', 'www.')
-                #mediaURL = URL
-                mediaPos = mediaURL.find('mediaformat=')+12
-                logging.debug ('###### GOING TO GRAB MEDIA '+mediaURL)
-                return grabMedia(mediaURL,tmpdir+'image'+str(num)+'.'+mediaFormat,60)
-        ##### URL Is not in screenscraper
+            if 'screenscraper' in media['url']:
+                mediaFormat = media['format']
             else:
                 mediaFormat = URL[URL.rindex('.')+1:]
-                mediaURL = URL
-                return grabMedia(mediaURL,tmpdir+'image'+str(num)+'.'+mediaFormat,60)
+            mediaURL = media['url']
+            return grabMedia(mediaURL,tmpdir+'image'+str(num)+'.'+mediaFormat)
     logging.debug ('###### NO IMAGE FOUND ')
     return ''
 
 def doMediaDownload(medialist,destfile,path,hash):
-    logging.debug ('###### DOWNLOADING MEDIA')
+    logging.debug ('###### DOWNLOADING MEDIA -> '+str(os.path.isfile(destfile)))
     if (not(os.path.isfile(destfile)) and ('images' in destfile)) or UPDATEDATA:
-        logging.debug('###### GOING TO DOWNLOAD COMPOSITE SCREEN')
+        logging.debug('###### GOING TO DOWNLOAD COMPOSITE SCREEN '+destfile)
         img1 = getImage(medialist,random.randint(0,10000),'mixrbv1')
         if img1 <> '':  
             logging.debug ('###### WE GOT A COMPOSITE')
@@ -1081,6 +1076,9 @@ def doMediaDownload(medialist,destfile,path,hash):
                     os.remove(img2)
             except:
                 logging.debug ('###### COULD NOT REMOVE FAILED IMAGES')
+    else:
+        logging.error('###### FILE IS ALREADY PRESENT - SKIPPING DOWNLOAD')
+        return ''
 
 def processBezels(medialist,destfile,path,hash,zipname):
     logging.debug ('###### PROCESS BEZEL FOR '+zipname)
@@ -1119,12 +1117,8 @@ def doVideoDownload(medialist,destfile):
     for media in medialist:
         logging.debug ('###### MEDIA TYPE IS '+media['type'])
         if media['type'].upper() == 'VIDEO-NORMALIZED':
-            URL = media['url']
-            if 'screenscraper' in URL:
-                mediaURL = URL.replace('clone.', 'www.')
-            else:
-                mediaURL = URL
-            return grabVideo(mediaURL,destfile,120)
+            mediaURL = media['url']
+            return grabVideo(mediaURL,destfile)
     logging.debug ('###### THERE IS NO VIDEO FOR THIS FILE')
     return ''
 
@@ -1139,18 +1133,11 @@ def getVideo(medialist, path, file, hash):
         logging.debug('##### GRABBING VIDEO FOR ' + file)
         destfile = path+'/videos/'+hash+'-video.mp4'
         if os.path.isfile(destfile):
-            with open(destfile) as f:
-                logging.debug ('###### VIDEO FILE EXISTS ALREADY')
-                fileread = f.read()
-                if (('Votre quota de scrape est' in fileread) or ('API closed for non-registered members' in fileread) or ('Faite du tri dans vos fichiers roms et repassez demain !' in fileread)) or (os.stat(destfile).st_size < 10000):
-                    if os.path.isfile(destfile):
-                        logging.debug ('###### BUT IS CORRUPT')
-                        os.remove(destfile)
-                        logging.debug ('###### SO I DELETE AND REDOWNLOAD')
-                    doVideoDownload(medialist,destfile)
+            logging.debug ('###### FILE ALREADY EXISTS, NOT DOWNLOADING AGAIN')
+            return destfile
         else:
             logging.debug ('###### THERE IS NO VIDEO FILE PRESENT SO I DOWNLOAD')
-            doVideoDownload(medialist,destfile)
+            return doVideoDownload(medialist,destfile)
     else:
         logging.debug ('###### MEDIALIST IS EMPTY')
     return destfile
@@ -1164,14 +1151,7 @@ def getMedia(medialist, path, file, hash,zipname):
         destfile = path+'/images/'+hash+'-image.png'
         if os.path.isfile(destfile):
             logging.debug ('###### MEDIA FILE ALREADY EXISTS')
-            with open(destfile) as f:
-                fileread = f.read()
-                if ('API closed for non-registered members' in fileread or 'Faite du tri dans vos fichiers roms et repassez demain !' in fileread) or (os.stat(destfile).st_size < 3000):
-                    if os.path.isfile(destfile):
-                        logging.debug ('###### BUT IS CORRUPT SO I DELETE IT')
-                        os.remove(destfile)
-                        logging.debug ('###### GOING TO REDOWNLOAD MEDIA')
-                        doMediaDownload(medialist,destfile,path,hash)
+            return destfile
         else:
             logging.debug ('###### GOING TO DOWNLOAD MEDIA')
             doMediaDownload(medialist,destfile,path,hash)
@@ -2897,7 +2877,7 @@ def mediaConvertor(media,mediaList):
                         logging.debug (str(my_media))
     return mediaList
 
-def insertGameMediasInDB(id,medias):
+def insertGameMediasInDB(id,medias,sysid):
     counter = 0
     if not isinstance(medias,list):
         new_medias = []
@@ -2915,7 +2895,12 @@ def insertGameMediasInDB(id,medias):
         logging.debug('###### GOT RESULT FROM MEDIAS CHECK '+str(result))
         if result == None or result == []:
             sqlst = 'INSERT INTO gameMedias (type,url,region,format,cnt,gameid) VALUES (%s,%s,%s,%s,%s,%s)'
-            values = (media['type'],media['url'],mediaregion,media['format'],str(counter),str(id))
+            if mediaregion == 'UNK':
+                staticURL = 'www.screenscraper.fr/medias/'+str(sysid)+'/'+str(id)+'/'+media['type']+'.'+media['format']
+            else:
+                staticURL = 'www.screenscraper.fr/medias/'+str(sysid)+'/'+str(id)+'/'+media['type']+'('+mediaregion+').'+media['format']
+            logging.debug ('###### STATIC URL FOR MEDIA IS '+staticURL)
+            values = (media['type'],staticURL,mediaregion,media['format'],str(counter),str(id))
             result,success = queryDB(sqlst,values,True,mydb)
             counter = counter + 1
 
@@ -2998,7 +2983,7 @@ def insertGameInLocalDb(gameInfo):
         logging.error ('###### COULD NOT FIND ROMS FOR THE GAME - LEAVING EMPTY '+str(e))
     try:
         medias = gameInfo['medias']
-        insertGameMediasInDB(game['id'],medias)
+        insertGameMediasInDB(game['id'],medias,game['system'])
     except Exception as e:
         logging.error ('###### COULD NOT FIND MEDIAS FOR THE GAME -'+str(e)+' - DEFAULTING')
         ##medias = [{'type':'unk','url':'unk','region':'unk','format':'unk'}]
@@ -3071,7 +3056,7 @@ if migrateDB:
     currssid = 0
     gameid = int(startid)
     params =dict(fixParams)
-    numGames = 213625
+    numGames = 213630
     response = 'QUOTA'
     #### THis game with id Zero is going to be used to handle unknown roms
     zeroGame={'id':'0'}
@@ -3093,14 +3078,14 @@ if migrateDB:
             sql = 'SELECT id from games where id = %s'
             val = (gameid,)
             exists,success = queryDB(sql,val,False,mydb)
-            if str(exists) != str(gameid):
-                insertGameInLocalDb(response['jeu'])
+            #if str(exists) != str(gameid):
+            insertGameInLocalDb(response['jeu'])
         if cnt == 50:
 	        mydb.commit()
 	        cnt = 0
         else:
             cnt = cnt + 1
-        logging.error ('###### DONE GAME '+str(gameid))
+        logging.info ('###### DONE GAME '+str(gameid))
         gameid = gameid + 1
         response = 'QUOTA'
         currssid = currssid + 1

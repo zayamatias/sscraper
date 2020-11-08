@@ -33,7 +33,7 @@ import re
 import cookielib
 import config
 import socket
-
+import shutil
 
 ### Parse arguments first
 ### Arguments are :
@@ -942,12 +942,7 @@ def grabVideo (URL,destfile):
             if not validateVideo(destfile):
                 if os.path.isfile(destfile):
                     os.remove(destfile)
-                logging.error ('###### VIDEO DOWNLOAD IS CORRUPTED SEE IF WE WERE ANONYMOUS')
-                if 'ssid=&sspassword' in URL and 'screenscraper' in URL:
-                    URL = URL.replace ('ssid=','ssid='+config.ssid[CURRSSID])
-                else:
-                    if "screenscraper" in URL:
-                        URL = URL.replace ('www.','clone.')
+                    logging.debug ('###### DOWNLOADED VIDEO IS CORRUPT, RETRYING')
                 result = -1
             retries = retries + 1
         logging.debug ('###### RESULT OF DOWNLOAD '+str(result))
@@ -1012,13 +1007,7 @@ def grabMedia(URL,destfile):
                 if os.path.isfile(destfile):
                     logging.debug('###### COULD NOT VALIDATE '+destfile+' SO I REMOVE IT')
                     os.remove(destfile)
-                if 'ssid=&sspassword' in URL and 'screenscraper' in URL:
-                    URL = URL.replace ('ssid=','ssid='+config.ssid[CURRSSID])
-                else:
-                    if 'screenscraper' in URL:
-                        logging.debug('###### .WWW IS NOT WORKING, LET\'S TRY CLONE.')
-                        URL = URL.replace ('www.','clone.')
-                logging.error ('###### DOWNLOAD IS CORRUPTED ON RETRY '+str(retries+1)+' URL '+str(URL))
+                logging.debug ('###### DOWNLOAD IS CORRUPTED ON RETRY '+str(retries+1)+' URL '+str(URL))
                 result = -1
             retries = retries + 1
         logging.debug ('###### RESULT OF DOWNLOAD '+str(result))
@@ -1059,7 +1048,7 @@ def doMediaDownload(medialist,destfile,path,hash):
         img1 = getImage(medialist,random.randint(0,10000),'mixrbv1')
         if img1 <> '':  
             logging.debug ('###### WE GOT A COMPOSITE')
-            os.rename(img1,destfile)
+            shutil.move(img1,destfile)
             return
         logging.debug ('###### NO COMPOSITE FOUND, CREATING ONE - DOWNLOADING SCREENSHOT')
         img1 = getImage(medialist,random.randint(0,10000),'ss')
@@ -1093,7 +1082,7 @@ def processBezels(medialist,destfile,path,hash,zipname):
     else:
         destfile = bezeldir+'/bezel-'+str(hash)+img[img.rindex('.')-1:]
         logging.debug ('###### DESTINATION FOR BEZEL IS '+destfile)
-        os.rename(img,destfile)
+        shutil.move(img,destfile)
         zipname = zipname[zipname.rfind('/')+1:]
         logging.debug ('###### ZIPNAME IS '+zipname)
         bezelcfg = path+'/'+zipname+'.cfg'
@@ -1659,7 +1648,8 @@ def grabData(system, path, CURRSSID, acceptedExtens):
     for file in filelist:
         ### CREATE A PORCESS FILE VARIABLE SO WE KEEP THE INITIAL FILE VARIABLE QUIET
         procfile = file
-        logging.info ('---------------------- START FILE ['+procfile+'] ------------------------------')
+        taillen = 30-len(procfile)/4
+        logging.info ('-+'*taillen+'- START FILE ['+procfile+'] '+'-+'*taillen+'-')
         ### INITIALIZE GAMEINFO, WE DO NOT WANT SOMETHING STRANGE HAPPENING
         gameinfo = None
         ### INITIALIZE THSIGAME ALSO
@@ -1715,7 +1705,7 @@ def grabData(system, path, CURRSSID, acceptedExtens):
         if CURRSSID == len(config.ssid):
             CURRSSID = 0
         ### INFORM WE HAVE FINISHED PROCESSING FILE
-        logging.info ('---------------------- END FILE ['+procfile+'] ------------------------------')
+        logging.info ('-+'*taillen+'- END FILE ['+procfile+'] '+'-+'*taillen+'-')
     ### WE HAVE PROCESSED ALL FILES, SO ADD GAMELIST TO THE ROOT ELEMENT OF THE XML
     tree._setroot(gamelist)
     ### SET THE DESTINATION XML FILE
@@ -2647,7 +2637,7 @@ def updateFile(path,localSHA,localCRC,localMD):
             if res == 0:
                 ### Rename file
                 try:
-                    os.rename(path,destFile)
+                    shutil.move(path,destFile)
                 except:
                     res = updateDBFile(destFile,path)
 
@@ -2694,7 +2684,7 @@ def renameFiles():
             deleteHashFromDB (thisfile)
     logging.info ('###### - FINISHED FILE RENAMING PROCESS - TOTAL FILES PROCESSED '+str(procfiles))
 
-def insertDataInLocalDB(obj,table):
+def insertDataInLocalDB(obj,table,doupdate):
     sqlst= 'REPLACE INTO '+table+' '
     columns = ''
     values = ''
@@ -2762,7 +2752,7 @@ def insertEditorInLocalDb(edid,edname):
         result,success = queryDB(sqlst,(),True,mydb)
         return success
 
-def insertGameNamesInDB(id,names):
+def insertGameNamesInDB(id,names,doupdate):
     try:
         if not isinstance(names,list):
             new_names=[]
@@ -2788,8 +2778,12 @@ def insertGameNamesInDB(id,names):
             sqlst = 'INSERT INTO gameNames (gameid,region,text) VALUES (%s,%s,%s)'
             values = (str(id),name['region'],name['text'])
             result,success = queryDB(sqlst,values,True,mydb)
+        elif doupdate:
+            sqlst = 'UPDATE gameNames SET region=%s ,text=%s where id=%s'
+            values = (name['region'],name['text'],response[0])
+            result,success = queryDB(sqlst,values,True,mydb)
 
-def insertSynopsisInDB(id,synopsis):
+def insertSynopsisInDB(id,synopsis,doupdate):
     try:
         if not isinstance(synopsis,list):
             new_syn = []
@@ -2811,6 +2805,10 @@ def insertSynopsisInDB(id,synopsis):
         if result == None or result == []:
             sqlst = 'INSERT INTO gameSynopsis (gameid,langue,text) VALUES (%s,%s,%s)'
             values = (str(id),syn['langue'],syn['text'])
+            result,success = queryDB(sqlst,values,True,mydb)
+        elif doupdate:
+            sqlst = 'UPDATE gameSynopsis SET langue=%s ,text=%s where id=%s'
+            values = (name['langue'],name['text'],response[0])
             result,success = queryDB(sqlst,values,True,mydb)
 
 def insertGameRomsInDB(id,roms,sysid):
@@ -2848,6 +2846,21 @@ def insertGameRomsInDB(id,roms,sysid):
                      str(id),str(sysid))
             logging.debug ('###### GOING TO EXECUTE SQL')
             result,success = queryDB(sqlst,values,True,mydb)
+        elif doupdate:
+            logging.debug ('####### THE ROM IS NOT IN THE DB')
+            sqlst = 'UPDATE gameRoms set romfilename=%s,romsha1=%s,romcrc=%s,rommd5=%s,beta=%s,demo=%s,proto=%s,trad=%s,hack=%s,unl=%s,alt=%s,best=%s,netplay=%s,gameid=%s,systemid=%s \
+                     WHERE id = %s'
+            if romsha1 == 'None':
+                romsha1 = ''
+            if rommd5 == 'None':
+                rommd5 = ''
+            if romcrc == 'None':
+                romcrc = ''
+            values =(rom['romfilename'],romsha1,romcrc,rommd5,str(rom['beta']),str(rom['demo']),str(rom['proto']),\
+                     str(rom['trad']),str(rom['hack']),str(rom['unl']),str(rom['alt']),str(rom['best']),str(rom['netplay']),\
+                     str(id),str(sysid),response[0])
+            logging.debug ('###### GOING TO EXECUTE SQL')
+            result,success = queryDB(sqlst,values,True,mydb)
 
 def mediaConvertor(media,mediaList):
     for key in media.keys():
@@ -2877,7 +2890,7 @@ def mediaConvertor(media,mediaList):
                         logging.debug (str(my_media))
     return mediaList
 
-def insertGameMediasInDB(id,medias,sysid):
+def insertGameMediasInDB(id,medias,sysid,doupdate):
     counter = 0
     if not isinstance(medias,list):
         new_medias = []
@@ -2903,8 +2916,18 @@ def insertGameMediasInDB(id,medias,sysid):
             values = (media['type'],staticURL,mediaregion,media['format'],str(counter),str(id))
             result,success = queryDB(sqlst,values,True,mydb)
             counter = counter + 1
+        elif doupdate:
+            sqlst = 'UPDATE gameMedias SET type=%s,url=%s,region=%s,format=%s,cnt=%s,gameid=%s WHERE id = %s'
+            if mediaregion == 'UNK':
+                staticURL = 'www.screenscraper.fr/medias/'+str(sysid)+'/'+str(id)+'/'+media['type']+'.'+media['format']
+            else:
+                staticURL = 'www.screenscraper.fr/medias/'+str(sysid)+'/'+str(id)+'/'+media['type']+'('+mediaregion+').'+media['format']
+            logging.debug ('###### STATIC URL FOR MEDIA IS '+staticURL)
+            values = (media['type'],staticURL,mediaregion,media['format'],str(counter),str(id),response[0])
+            result,success = queryDB(sqlst,values,True,mydb)
+            counter = counter + 1
 
-def insertGameDatesInDB(id,dates):
+def insertGameDatesInDB(id,dates,doupdate):
     if not isinstance(dates,list):
         logging.debug('###### DATES ARE NOT LIST '+str(dates))
         new_dates = []
@@ -2922,8 +2945,12 @@ def insertGameDatesInDB(id,dates):
             sqlst = 'INSERT INTO gameDates (text,region,gameid) VALUES (%s,%s,%s)'
             values = (rdate['text'],rdate['region'],str(id))
             result,success = queryDB(sqlst,values,True,mydb)
+        elif doupdate:
+            sqlst = 'UPDATE gameDates SET text=%s,region=%s WHERE id = %s'
+            values = (rdate['text'],rdate['region'],response[0])
+            result,success = queryDB(sqlst,values,True,mydb)
 
-def insertGameInLocalDb(gameInfo):
+def insertGameInLocalDb(gameInfo,doupdate):
     logging.debug ('###### GAMEINFO IS '+str(gameInfo))
     game = dict()
     try:
@@ -2960,15 +2987,15 @@ def insertGameInLocalDb(gameInfo):
             game['system'] = 0
     try:
         game['editeur'] = gameInfo['editeur']['id']
-        insertEditorInLocalDb(game['editeur'],gameInfo['editeur']['text'])
+        #insertEditorInLocalDb(game['editeur'],gameInfo['editeur']['text'])
     except Exception as e:
         logging.error ('###### ATTRIBUTE EDITOR NOT FOUND, CREATING DEFAULT FOR '+str(game['id']))
         game['editeur'] = 0
     logging.debug ('###### GAME INFO IS '+str(game))
-    insertDataInLocalDB(game,'games')
+    insertDataInLocalDB(game,'games',doupdate)
     try:
         logging.debug ('###### NAMES ARE '+str(gameInfo['noms']))
-        insertGameNamesInDB(game['id'],gameInfo['noms'])
+        insertGameNamesInDB(game['id'],gameInfo['noms'],doupdate)
     except Exception as e:
         logging.error ('###### COULD NOT FIND NAMES FOR THE GAME')
     try:
@@ -2978,6 +3005,7 @@ def insertGameInLocalDb(gameInfo):
         logging.error ('###### COULD NOT FIND SYNOPSIS FOR THE GAME -'+str(e)+' - DEFAULTING')
         ###synopsis = [{'langue':'UNK','text':''}]
     try:
+        logging.debug('###### INSERTING ROMS')
         insertGameRomsInDB(game['id'],  gameInfo['roms'],game['system'])
     except Exception as e:
         logging.error ('###### COULD NOT FIND ROMS FOR THE GAME - LEAVING EMPTY '+str(e))
@@ -3056,7 +3084,7 @@ if migrateDB:
     currssid = 0
     gameid = int(startid)
     params =dict(fixParams)
-    numGames = 213630
+    numGames = 213636
     response = 'QUOTA'
     #### THis game with id Zero is going to be used to handle unknown roms
     zeroGame={'id':'0'}
@@ -3078,8 +3106,8 @@ if migrateDB:
             sql = 'SELECT id from games where id = %s'
             val = (gameid,)
             exists,success = queryDB(sql,val,False,mydb)
-            #if str(exists) != str(gameid):
-            insertGameInLocalDb(response['jeu'])
+            if (str(exists) != str(gameid)) or UPDATEDATA:
+                insertGameInLocalDb(response['jeu'],UPDATEDATA)
         if cnt == 50:
 	        mydb.commit()
 	        cnt = 0

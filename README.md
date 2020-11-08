@@ -19,11 +19,24 @@ If you have any questions, you can always contact me in twitter:[8bitzaya](https
 
 Also, if you do a scrape of the 200k games that are in SS and store them in the localDB, you would need SS only to download media (May add that media caching feature in the future, but you'll probably need a huge disk capacit and a lot of patience!)
 
+## Quick start
+
+- Install MariaDB in any machine on your network (download mariadb server here https://mariadb.org/download/)
+- Execute the sql file you find in this same repository
+- Give access to a user (identified by password) to this database and update config.py with same credentials
+- Request a developer key at screenscraper (very simple, do it in the forums) and update the config.py with same credentials
+- Update config.py with your login (ssid) and password (sspassword) from screenscraper (your usual user login)
+- My advice would be to start importing the screenscraper DB (--startid xxxx) where xxxxx is the game id you want to start with, usually is 1 but you can continue with whichver nymber in case the import stops
+- If you get DB errors, make sure that credentials are ok, that your server does not block incoming calls and that the DB was properly created.
+- Once everything is imported, you do not need to access screenscraper API anymore, even if the API is down, you will be able to scrape games (and maybe download media if server is not totally down)
+- In order to scrape , run the program without any parameters
+- I've tested it only with retropie configuration file (es_systems.cfg), not sure if it will work at all with different configruations.
+
 ## Default Behavior
 
 By default, running the script 'python sscraper.py' will:
 
-- Load the systems configuartion (XML) file - Make sure to update the location of your file in the config.py file.
+- Load the RetroPie systems configuartion (XML) file - Make sure to update the location of your file in the config.py file.
 - Parse files of the defined extensions for each system `<extension>.cue .CUE .chd .CHD</extension>`
 - Skip systems that have the `sskip='yes'` attribute set: `<system sskip='yes'>`
 - Use a special tag `<ssname>3DO</ssname>` that will match with the system name in screenscraper.fr

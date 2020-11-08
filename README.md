@@ -21,7 +21,8 @@ Also, if you do a scrape of the 200k games that are in SS and store them in the 
 
 ## Quick start
 
-- Install MariaDB in any machine on your network (download mariadb server here https://mariadb.org/download/)
+- Make sure you have python 2.7 (the one by default with RetroPie) and the dependencies in requirements.txt installed (pip install -r requirements.txt), if you need to install pip visit this: https://pip.pypa.io/en/stable/installing/
+- Install MariaDB in any machine on your network, I'd advise you against installing it on the same machine as your RetroPie install (download mariadb server here https://mariadb.org/download/)
 - Execute the sql file you find in this same repository
 - Give access to a user (identified by password) to this database and update config.py with same credentials
 - Request a developer key at screenscraper (very simple, do it in the forums) and update the config.py with same credentials

@@ -71,7 +71,7 @@ except:
 UPDATEDATA = update
 
 try:
-    logging.basicConfig(filename='sv3log.txt', filemode='a',
+    logging.basicConfig(filename='sv2log.txt', filemode='a',
                         format='%(asctime)s - %(process)d - %(name)s - %(levelname)s - %(message)s',
                         level=logging.INFO)
     logging.debug("###### LOGGING SERVICE STARTED")

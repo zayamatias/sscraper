@@ -81,14 +81,10 @@ CREATE TABLE `gameRoms` (
   `systemid` int(11) DEFAULT NULL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `gameRoms_UN` (`rommd5`,`romcrc`,`romsha1`),
-  KEY `gameRoms_FK` (`gameid`),
   KEY `gameRoms_romsha1_IDX` (`romsha1`) USING BTREE,
   KEY `gameRoms_romcrc_IDX` (`romcrc`) USING BTREE,
   KEY `gameRoms_rommd5_IDX` (`rommd5`) USING BTREE,
-  KEY `gameRoms_FK_1` (`systemid`),
-  CONSTRAINT `gameRoms_FK` FOREIGN KEY (`gameid`) REFERENCES `games` (`id`) ON DELETE CASCADE ON UPDATE CASCADE,
-  CONSTRAINT `gameRoms_FK_1` FOREIGN KEY (`systemid`) REFERENCES `systems` (`id`) ON DELETE SET NULL ON UPDATE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=12173 DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB AUTO_INCREMENT=1152471 DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE `gameDates` (
   `id` int(11) NOT NULL AUTO_INCREMENT,

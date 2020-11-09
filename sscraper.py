@@ -1,6 +1,5 @@
-# -*- coding: utf-8 -*-
-# Your code goes below this line
-####
+# coding: utf-8
+
 from shutil import copyfile
 import csv
 import ast
@@ -72,7 +71,7 @@ except:
 UPDATEDATA = update
 
 try:
-    logging.basicConfig(filename='sv2log.txt', filemode='a',
+    logging.basicConfig(filename='sv3log.txt', filemode='a',
                         format='%(asctime)s - %(process)d - %(name)s - %(levelname)s - %(message)s',
                         level=logging.INFO)
     logging.debug("###### LOGGING SERVICE STARTED")
@@ -138,7 +137,7 @@ class Game:
             logging.debug ('###### NO LOCALPATH DEFINED - CANNOT CREATE GAME')
             return None
         try:
-            file = jsondata['localpath']
+            file = jsondata['abspath']+'/'+jsondata['localpath']
         except Exception as e:
             logging.error ('###### COULD NOT CREATE LOCALPATH FOR GAME '+str(e))
         ### CAN WE COMPRESS FILE?? THIS IS DONE IN ORDER TO SAVE SPACE
@@ -185,7 +184,9 @@ class Game:
         self.playcount = ''
         self.lastplayed = ''
         self.hash = jsondata['localhash']
-        logging.debug ('###### FINSIHED CREATING GAME INSTANCE')
+        logging.debug ('###### FINISHED CREATING GAME INSTANCE')
+
+
 
     def getXML(self):
         if self is not None:
@@ -194,15 +195,15 @@ class Game:
             attrs = vars(self)
             logging.debug('###### GAME ATTRIBUTES '+str(attrs))
             for attr in attrs:
-                logging.debug ('###### ATTRIBUTES '+str(attr))
-                subEl = ET.SubElement(gameNode, attr)
+                found = False
                 try:
-                    subEl.text = attrs[attr].decode('utf-8').encode('ascii', 'replace')
-                except Exception as e:
-                    ##xmlcharrefreplace
-                    logging.debug ('###### ATTRIBUTES '+str(attrs[attr]))
-                    subEl.text = attrs[attr].encode('utf-8').decode('ascii', 'replace')
-                    logging.error("error "+str(e)+" in path")
+                    attrs[attr].decode('utf-8')
+                    encoding = 'utf-8'
+                except:
+                    logging.error('###### NOT UTF-8')
+                    sys.exit()
+                subEl = ET.SubElement(gameNode, attr)
+                subEl.text = attrs[attr]
             return gameNode
         else:
             return None
@@ -323,7 +324,7 @@ def getGameName(jsondata,path):
             logging.debug ('###### LOOKING FOR NAMES '+str(nom)+' TYPE '+str(type(nom)))
             if 'ss' in nom['region']:
                 logging.debug ('###### FOUND SCREEN SCRAPER NAME')
-                name = nom['text'].encode('utf-8').decode('ascii','ignore')
+                name = nom['text'].encode('utf-8')
         if not name:
             logging.debug ('###### DID NOT FOUND SCREEN SCRAPER NAME, ASSIGNING FIRST NAME')
             name = jsondata['jeu']['nom'][0]['text']
@@ -534,7 +535,7 @@ def callAPIURL(URL):
         if response != 'FAILED' and response != 'QUOTA':
             successCall = True
             logging.debug ('###### DECODING RESPONSE')
-            response = response.decode('utf-8').encode('ascii','replace') ### DO NOT TOUCH
+            response = response.encode('utf-8')               ##decode('utf-8').encode('ascii','replace') ### DO NOT TOUCH
         if response == 'QUOTA':
             logging.debug ('###### WE GOT QUOTA ERROR FOR ANON AND IDENTIFIED - WE CANNOT CONTINUE - WAIT 10 MINS TO RETRY')
             sleep (180)
@@ -659,8 +660,20 @@ def getGenre(json):
 
 def getPlayers(json):
     ### GET NUMBER OF PLAYERS OF A GAME
-    # TODO:
-    return ''
+    players = ''
+    if isinstance(json, dict):
+        logging.debug('###### JSON IS DICTIONARY ')
+        if 'jeu' in json.keys():
+            logging.debug('###### JEU IN KEYS')
+            jeu = json['jeu']
+            if isinstance(jeu, dict):
+                logging.debug('###### JEU IS DICT')
+                try:
+                    players = jeu['joueurs']['text']
+                except:
+                    logging.error ('###### COULD NOT FIND PLAYERS NUMBER')
+                    return ''
+    return players
 
 def generateImage(img1,img2,destfile):
     ### THIS FUNCTION COMBINES TWO IMAGES INTO A SINGLE ONE
@@ -713,50 +726,73 @@ def getDesc(json):
     # THIS FUNCTION GETS THE SYNOPSIS OF A GAME, IT TRIES ENGLISH FIRST, THEN FRENCH, AND THEN WHATEVER IS AVAILABLE
     description = ''
     if isinstance(json, dict):
+        logging.debug('###### JSON IS DICTIONARY ')
         if 'jeu' in json.keys():
+            logging.debug('###### JEU IN KEYS')
             jeu = json['jeu']
-            if not isinstance(jeu, dict):
-                if 'synopsis' in jeu.keys():
-                    synopsis = jeu['synopsis']
-                    if not isinstance(synopsis, dict):
-                        synopsis = synopsis[0]
-                    if isinstance(synopsis, dict):
-                        for key, value in synopsis.iteritems():
-                            if key == 'synopsis_en':
-                                description = value
-                    else:
-                        description = synopsis
+            if isinstance(jeu, dict):
+                logging.debug('###### JEU IS DICT')
+                try:
+                    synops = jeu['synopsis']
+                except:
+                    logging.error ('###### COULD NOT FIND SYNOPSIS FOR GAME')
+                    return description
+                logging.debug('###### GOT SYNOPIS '+str(synops))
+                found = False
+                if isinstance(synops,list):
+                    for desc in synops:
+                        logging.debug ('###### LANGUE '+desc['langue'])
+                        if desc['langue'].upper()=='EN':
+                            logging.debug ('###### FOUND YOUR LANGUAGE')
+                            description = desc['text']
+                            found = True
+                            break
+                if not found:
+                    try:
+                        description = synops[0]['text']
+                    except:
+                        desciption =''
+    logging.debug ('###### RETURNING DESCRIPTION '+description)
     return description
 
 
 def getDate(json):
     # THSI FUNCTION GETS THE RELEASE DATE OF A GAME
-    reldate = ''
+    reldate = 'Unknown'
     if isinstance(json, dict):
-        logging.debug ('###### IT IS A DICTIONARY')
+        logging.debug('###### JSON IS DICTIONARY ')
         if 'jeu' in json.keys():
+            logging.debug('###### JEU IN KEYS')
             jeu = json['jeu']
-            logging.debug ('###### GOT JEU KEY')
             if isinstance(jeu, dict):
-                logging.debug ('###### IT IS A DICTIONARY')
-                if 'dates' in jeu.keys():
-                    logging.debug ('###### DATES IN THE KEYS')
+                logging.debug('###### JEU IS DICT')
+                try:
                     dates = jeu['dates']
-                    if not isinstance(dates, dict):
-                        logging.debug ('###### DATES IS NOT DICTIONARY')
-                        if dates:
-                            dates = dates[0]
-                        else:
-                            dates = ['']
-                    if isinstance(dates, dict):
-                        logging.debug ('###### DATES IS DICTIONARY')
-                        for key, value in dates.iteritems():
-                            if key == 'date_wor':
-                                logging.debug('####### DATE BY WORLD '+str(value))
-                                reldate = value
-                    else:
-                        logging.debug('####### DATE BY INDEX '+str(dates))
-                        reldate = dates[0]
+                except:
+                    logging.error ('###### COULD NOT FIND DATES FOR GAME')
+                    return reldate
+                logging.debug('###### GOT DATES '+str(dates))
+                found = False
+                if isinstance(dates,list):
+                    for dat in dates:
+                        logging.debug ('###### REGION '+dat['region'])
+                        if dat['region'].upper()=='EU':
+                            logging.debug ('###### FOUND YOUR REGION')
+                            reldate= dat['text']
+                            found = True
+                            break
+                    if not found:
+                        try:
+                            reldate = dates[0]['text']
+                        except Exception as e:
+                            logging.debug ('###### COULD NOT FIND DATES '+str(e))
+                else:
+                    try:
+                        reldate = dates['text']
+                    except Exception as e:
+                        logging.debug ('###### COULD NOT FIND DATES '+str(e))
+
+    logging.debug ('###### RETURNING DATES '+reldate)
     return reldate
 
 def writeXML(rootElement, filename):
@@ -927,7 +963,7 @@ def addGameToList(gamelist, game):
     pass
 
 def grabVideo (URL,destfile):
-        logging.error ('###### ACTUALLY GOING TO DOWNLOAD VIDEO '+destfile)
+        logging.debug ('###### ACTUALLY GOING TO DOWNLOAD VIDEO '+destfile)
         result = 1
         retries = 0
         while (result !=0) and (retries <10):
@@ -943,6 +979,7 @@ def grabVideo (URL,destfile):
                 if os.path.isfile(destfile):
                     os.remove(destfile)
                     logging.debug ('###### DOWNLOADED VIDEO IS CORRUPT, RETRYING')
+                URL = URL.replace('www.','clone.')
                 result = -1
             retries = retries + 1
         logging.debug ('###### RESULT OF DOWNLOAD '+str(result))
@@ -1007,6 +1044,7 @@ def grabMedia(URL,destfile):
                 if os.path.isfile(destfile):
                     logging.debug('###### COULD NOT VALIDATE '+destfile+' SO I REMOVE IT')
                     os.remove(destfile)
+                URL = URL.replace('www.','clone.')
                 logging.debug ('###### DOWNLOAD IS CORRUPTED ON RETRY '+str(retries+1)+' URL '+str(URL))
                 result = -1
             retries = retries + 1
@@ -1388,7 +1426,11 @@ def process7Zip(path,zipfile,CURRSSID,sysid):
 
 def processZipFile(path,filename,sysid):
     logging.info ('###### PROCESSING ZIPFILE '+str(filename))
-    zfiles = getNamesInZip(path)
+    if path[:-1] != '/':
+        zipfilefull = path+'/'+filename
+    else:
+        zipfilefull = path+filename
+    zfiles = getNamesInZip(zipfilefull)
     logging.debug('##### RETURNED THESE FILES IN ZIP ' + str(zfiles))
     if zfiles == '':
         # error extracting file, go to next one
@@ -1397,7 +1439,7 @@ def processZipFile(path,filename,sysid):
     else:
         for zfile in zfiles:
             proczfile = zfile
-            logging.debug ('###### GETTING INFO FOR FILE '+proczfile+' INSIDE ZIP '+filename)
+            logging.debug ('###### GETTING INFO FOR FILE '+proczfile+' INSIDE ZIP '+zipfilefull)
             exten = os.path.splitext(proczfile)[1]
             logging.debug ('###### EXTENSION IS '+exten)
             ''''
@@ -1406,7 +1448,7 @@ def processZipFile(path,filename,sysid):
                continue
             else:
             '''
-            result = extractZipFile(filename,proczfile,'/tmp')
+            result = extractZipFile(zipfilefull,proczfile,'/tmp')
             logging.debug ('####### RESULT OF EXTRACT IS '+str(result))
             gameId = 0
             if result:
@@ -1435,6 +1477,7 @@ def processZipFile(path,filename,sysid):
                 else:
                     gameId = 0
                     logging.debug ('###### COULD NOT FIND ANYTHING FOR '+str(unzipfile))
+    logging.debug('###### GAMEID FOUND INSIDE ZIP IS '+str(gameId))
     return gameId
 
 def process7ZFile(filename,sysid):
@@ -1715,7 +1758,7 @@ def grabData(system, path, CURRSSID, acceptedExtens):
         logging.debug ('###### REMOVING GAMELIST')
         os.remove(xmlFile)
     ### AND THEN CREATE IT
-    result = tree.write(xmlFile)
+    result = tree.write(xmlFile,encoding='utf-8', xml_declaration=True)
     if result != None:
         ### INFORM WE COULD NOT CREATE XML
         logging.error ('##### ERROR WHEN CREATING XML '+str(result))
@@ -1813,11 +1856,11 @@ def querySHAinDB(mysha1='None',mymd5='None',mycrc='None',filename='',sysid=0,pat
     sql = "SELECT  CONCAT ( '{\"jeu\":{\"id\":\"',mygameid,'\",\"noms\":[',COALESCE(names_result,''),'],\"synopsis\":[',COALESCE(synopsis_result,''),']\n\
             ,\"medias\":[',COALESCE(media_result,'') ,'],',COALESCE(system_result,'\"systeme\":{}'),',',COALESCE(editor_result,'\"editeur\":{}'),',',COALESCE(date_result,'\"dates\":{}'),'}}') as json\n\
             FROM (SELECT gr.gameid as mygameid,\n\
-            GROUP_CONCAT(DISTINCT '{\"region\":\"',gn.region,'\",\"text\":\"',gn.`text`,'\"}') as names_result,\n\
-            GROUP_CONCAT(DISTINCT '{\"region\":\"',gs.langue,'\",\"text\":\"',gs.`text`,'\"}') as synopsis_result,\n\
+            GROUP_CONCAT(DISTINCT '{\"region\":\"',gn.region,'\",\"text\":\"',CONVERT(gn.`text` USING ascii),'\"}') as names_result,\n\
+            GROUP_CONCAT(DISTINCT '{\"langue\":\"',gs.langue,'\",\"text\":\"',CONVERT(gs.`text` USING ascii),'\"}') as synopsis_result,\n\
             GROUP_CONCAT(DISTINCT '{\"type\":\"',gm.`type`,'\",\"url\":\"',gm.url,'\",\"region\":\"',gm.region,'\",\"format\":\"',gm.`format`,'\"}') as media_result,\n\
-            GROUP_CONCAT(DISTINCT '\"systeme\":{\"id\":\"',sm.id,'\",\"text\":\"',sm.`text`,'\"}') as system_result,\n\
-            GROUP_CONCAT(DISTINCT '\"editeur\":{\"id\":\"',ed.id,'\",\"text\":\"',ed.`text`,'\"}') as editor_result,\n\
+            GROUP_CONCAT(DISTINCT '\"systeme\":{\"id\":\"',sm.id,'\",\"text\":\"',CONVERT(sm.`text` USING ascii),'\"}') as system_result,\n\
+            GROUP_CONCAT(DISTINCT '\"editeur\":{\"id\":\"',ed.id,'\",\"text\":\"',CONVERT(ed.`text` USING ascii),'\"}') as editor_result,\n\
             GROUP_CONCAT(DISTINCT '\"dates\":{\"region\":\"',gd.region ,'\",\"text\":\"',gd.`text`,'\"}') as date_result\n\
             FROM gameRoms gr\n\
             LEFT JOIN gameNames gn ON gn.gameid = gr.gameid\n\
@@ -1875,7 +1918,7 @@ def locateShainDB(mysha1='None',mymd5='None',mycrc='None',filename='',sysid=0,pa
             except Exception as e:
                 logging.error ('###### ERROR CREATING ROM OBJECT '+str(e))
             logging.debug ('###### MY ROM IS  '+str(myRom))
-            insertGameRomsInDB(gameID,myRoms,sysid)
+            insertGameRomsInDB(gameID,myRoms,sysid,False)
             if gameID !=0:
                 return locateShainDB(mysha1,mymd5,mycrc,filename,sysid,path)
             else:
@@ -2780,7 +2823,7 @@ def insertGameNamesInDB(id,names,doupdate):
             result,success = queryDB(sqlst,values,True,mydb)
         elif doupdate:
             sqlst = 'UPDATE gameNames SET region=%s ,text=%s where id=%s'
-            values = (name['region'],name['text'],response[0])
+            values = (name['region'],name['text'],result)
             result,success = queryDB(sqlst,values,True,mydb)
 
 def insertSynopsisInDB(id,synopsis,doupdate):
@@ -2808,10 +2851,10 @@ def insertSynopsisInDB(id,synopsis,doupdate):
             result,success = queryDB(sqlst,values,True,mydb)
         elif doupdate:
             sqlst = 'UPDATE gameSynopsis SET langue=%s ,text=%s where id=%s'
-            values = (name['langue'],name['text'],response[0])
+            values = (name['langue'],name['text'],result)
             result,success = queryDB(sqlst,values,True,mydb)
 
-def insertGameRomsInDB(id,roms,sysid):
+def insertGameRomsInDB(id,roms,sysid,doupdate):
     logging.debug ('###### INSERTING ROMS IN DB '+str(roms))
     ###### SCREENSCRAPER DOES NOT ALWAYS HAVE SHA,CRC AND MD%
     ###### SO WE HAVE TP CHECK TO AVOID ERRORS
@@ -2828,25 +2871,32 @@ def insertGameRomsInDB(id,roms,sysid):
             rommd5 = rom['rommd5']
         except:
             rommd5 = 'None'
+        if romsha1 == '':
+            romsha1 = 'None'
+        if rommd5 == '':
+            rommd5 = 'None'
+        if romcrc == '':
+            romcrc = 'None'
         sql = 'SELECT id FROM gameRoms where romsha1="'+romsha1+'" or rommd5="'+rommd5+'" or romcrc="'+romcrc+'"'
         result,success = queryDB(sql,(),True,mydb)
         logging.debug('###### GOT RESULT FROM ROM CHECK '+str(result))
         if result is None or result == []:
-            logging.debug ('####### THE ROM IS NOT IN THE DB')
-            sqlst = 'INSERT INTO gameRoms (romfilename,romsha1,romcrc,rommd5,beta,demo,proto,trad,hack,unl,alt,best,netplay,gameid,systemid)\
-                     VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)'
             if romsha1 == 'None':
                 romsha1 = ''
             if rommd5 == 'None':
                 rommd5 = ''
             if romcrc == 'None':
                 romcrc = ''
+            logging.debug ('####### THE ROM IS NOT IN THE DB')
+            sqlst = 'INSERT INTO gameRoms (romfilename,romsha1,romcrc,rommd5,beta,demo,proto,trad,hack,unl,alt,best,netplay,gameid,systemid)\
+                     VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)'
             values =(rom['romfilename'],romsha1,romcrc,rommd5,str(rom['beta']),str(rom['demo']),str(rom['proto']),\
                      str(rom['trad']),str(rom['hack']),str(rom['unl']),str(rom['alt']),str(rom['best']),str(rom['netplay']),\
                      str(id),str(sysid))
             logging.debug ('###### GOING TO EXECUTE SQL')
             result,success = queryDB(sqlst,values,True,mydb)
         elif doupdate:
+            logging.debug ('###### RESULT IS OF TYPE '+str(type(result)))
             logging.debug ('####### THE ROM IS NOT IN THE DB')
             sqlst = 'UPDATE gameRoms set romfilename=%s,romsha1=%s,romcrc=%s,rommd5=%s,beta=%s,demo=%s,proto=%s,trad=%s,hack=%s,unl=%s,alt=%s,best=%s,netplay=%s,gameid=%s,systemid=%s \
                      WHERE id = %s'
@@ -2858,7 +2908,7 @@ def insertGameRomsInDB(id,roms,sysid):
                 romcrc = ''
             values =(rom['romfilename'],romsha1,romcrc,rommd5,str(rom['beta']),str(rom['demo']),str(rom['proto']),\
                      str(rom['trad']),str(rom['hack']),str(rom['unl']),str(rom['alt']),str(rom['best']),str(rom['netplay']),\
-                     str(id),str(sysid),response[0])
+                     str(id),str(sysid),result)
             logging.debug ('###### GOING TO EXECUTE SQL')
             result,success = queryDB(sqlst,values,True,mydb)
 
@@ -2913,7 +2963,10 @@ def insertGameMediasInDB(id,medias,sysid,doupdate):
             else:
                 staticURL = 'www.screenscraper.fr/medias/'+str(sysid)+'/'+str(id)+'/'+media['type']+'('+mediaregion+').'+media['format']
             logging.debug ('###### STATIC URL FOR MEDIA IS '+staticURL)
-            values = (media['type'],staticURL,mediaregion,media['format'],str(counter),str(id))
+            try:
+                values = (media['type'],staticURL,mediaregion,media['format'],str(counter),str(id))
+            except Exception as e:
+                logging.debug ('###### COULD NOT CREATE VALUES '+str(e))
             result,success = queryDB(sqlst,values,True,mydb)
             counter = counter + 1
         elif doupdate:
@@ -2923,7 +2976,10 @@ def insertGameMediasInDB(id,medias,sysid,doupdate):
             else:
                 staticURL = 'www.screenscraper.fr/medias/'+str(sysid)+'/'+str(id)+'/'+media['type']+'('+mediaregion+').'+media['format']
             logging.debug ('###### STATIC URL FOR MEDIA IS '+staticURL)
-            values = (media['type'],staticURL,mediaregion,media['format'],str(counter),str(id),response[0])
+            try:
+                values = (media['type'],staticURL,mediaregion,media['format'],str(counter),str(id),result)
+            except Exception as e:
+                logging.error ('###### COULD NOT CREATE VALUES '+str(e)+' FOR ID '+str(result))
             result,success = queryDB(sqlst,values,True,mydb)
             counter = counter + 1
 
@@ -2947,7 +3003,7 @@ def insertGameDatesInDB(id,dates,doupdate):
             result,success = queryDB(sqlst,values,True,mydb)
         elif doupdate:
             sqlst = 'UPDATE gameDates SET text=%s,region=%s WHERE id = %s'
-            values = (rdate['text'],rdate['region'],response[0])
+            values = (rdate['text'],rdate['region'],result)
             result,success = queryDB(sqlst,values,True,mydb)
 
 def insertGameInLocalDb(gameInfo,doupdate):
@@ -2970,6 +3026,11 @@ def insertGameInLocalDb(gameInfo,doupdate):
     except Exception as e:
         logging.error ('###### ATTRIBUTE TOPSTAFF NOT FOUND, CREATING DEFAULT FOR '+str(game['id']))
         game['topstaff'] = 0
+    try:
+        game['joueurs'] = gameInfo['joueurs']['text']
+    except Exception as e:
+        logging.error ('###### ATTRIBUTE PLAYERS NOT FOUND, CREATING DEFAULT FOR '+str(game['id']))
+        game['joueurs'] = 0
     try:
         game['rotation'] = gameInfo['rotation']
         if game['rotation'] == None:
@@ -3000,24 +3061,24 @@ def insertGameInLocalDb(gameInfo,doupdate):
         logging.error ('###### COULD NOT FIND NAMES FOR THE GAME')
     try:
         synopsis = gameInfo['synopsis']
-        insertSynopsisInDB(game['id'],synopsis)
+        insertSynopsisInDB(game['id'],synopsis,doupdate)
     except Exception as e:
         logging.error ('###### COULD NOT FIND SYNOPSIS FOR THE GAME -'+str(e)+' - DEFAULTING')
         ###synopsis = [{'langue':'UNK','text':''}]
     try:
         logging.debug('###### INSERTING ROMS')
-        insertGameRomsInDB(game['id'],  gameInfo['roms'],game['system'])
+        insertGameRomsInDB(game['id'],  gameInfo['roms'],game['system'],doupdate)
     except Exception as e:
         logging.error ('###### COULD NOT FIND ROMS FOR THE GAME - LEAVING EMPTY '+str(e))
     try:
         medias = gameInfo['medias']
-        insertGameMediasInDB(game['id'],medias,game['system'])
+        insertGameMediasInDB(game['id'],medias,game['system'],doupdate)
     except Exception as e:
         logging.error ('###### COULD NOT FIND MEDIAS FOR THE GAME -'+str(e)+' - DEFAULTING')
         ##medias = [{'type':'unk','url':'unk','region':'unk','format':'unk'}]
     try:
         dates = gameInfo['dates']
-        insertGameDatesInDB(game['id'], dates)
+        insertGameDatesInDB(game['id'], dates,doupdate)
     except Exception as e:
         logging.error ('###### COULD NOT FIND DATES FOR THE GAME -'+str(e)+' - DEFAULTING')
         ##dates = [{'region':'unk','text':'0'}]
@@ -3084,11 +3145,11 @@ if migrateDB:
     currssid = 0
     gameid = int(startid)
     params =dict(fixParams)
-    numGames = 213636
+    numGames = 213640
     response = 'QUOTA'
     #### THis game with id Zero is going to be used to handle unknown roms
     zeroGame={'id':'0'}
-    insertGameInLocalDb(zeroGame)
+    insertGameInLocalDb(zeroGame,UPDATEDATA)
     mydb.commit()
     while gameid <= numGames:
         while response == 'QUOTA' or response == 'ERROR':

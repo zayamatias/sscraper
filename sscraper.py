@@ -12,26 +12,19 @@ import os
 import hashlib
 import zlib
 import sys
-import wget
 import subprocess
 import logging
 import random
 from zipfile import ZipFile
-from unidecode import unidecode
-import unicodedata
 from xml.dom import minidom
-from multiprocessing import Pool
 import pymysql as mysql
 from PIL import Image
-from threading import Thread
 from datetime import datetime, time
 from time import sleep
 from pymediainfo import MediaInfo
 import argparse
 import re
-import cookielib
 import config
-import socket
 import shutil
 
 ### Parse arguments first
@@ -111,7 +104,6 @@ fixParams = {'devid': config.devid,
              'ssid':'',
              'sspassword': config.sspass,
              'output': 'json'}
-cachedir = '/home/pi/hashes/'
 
 CURRSSID = 0
 
@@ -127,8 +119,6 @@ donotcompress = config.donotcompress
 
 BIOSDIR = config.BIOSDIR
 UNKDIR = config.UNKDIR
-
-cookies = cookielib.LWPCookieJar()
 
 class Game:
     ### THIS IS THE GAME CLASS, IT WILL HOLD INFORMATION OF EACH SCRAPED GAME
@@ -195,10 +185,8 @@ class Game:
             attrs = vars(self)
             logging.debug('###### GAME ATTRIBUTES '+str(attrs))
             for attr in attrs:
-                found = False
                 try:
                     attrs[attr].decode('utf-8')
-                    encoding = 'utf-8'
                 except:
                     logging.error('###### NOT UTF-8')
                     sys.exit()
@@ -350,7 +338,6 @@ def updateInDBV2Call(api,params,response):
         ### Gameid=1 is added to the non caching criteria to avoid being there when quota is over and checking 
         logging.info ('###### GOT AN ERROR FROM API CALL SO NOT UPDATING V2 DB '+response)
         return False
-    result = ''
     logging.debug ('###### CONNECTING TO DB TO UPDATE CACHED RESULT FOR V2 CALL')
     sql = "INSERT INTO apicache (apiname,parameters,result) VALUES (%s,%s,%s)"
     val = (api,params,response)
@@ -551,7 +538,7 @@ def callAPIURL(URL):
     try:
         ### SEE IF IT IS A PROPER JSON OR NOT
         logging.debug ('###### GOING TO CHECK IF IT IS A REAL JSON')
-        retJson = json.loads(response)
+        response =  ast.literal_eval(response)
     except Exception as e:
         if response !='NOT FOUND' and response!='QUOTA' and response!='FAILED':
             logging.debug ('###### THE RETURN JSON WHEN CALLED API IS NOT VALID '+str(e)+', WILL TRY TO FIX')
@@ -751,7 +738,7 @@ def getDesc(json):
                     try:
                         description = synops[0]['text']
                     except:
-                        desciption =''
+                        description =''
     logging.debug ('###### RETURNING DESCRIPTION '+description)
     return description
 
@@ -847,7 +834,6 @@ def waitNewDay(runTime):
     startTime = time(*(map(int, runTime.split(':'))))
     logging.info ('###### WILL RESTART PROCESS AT '+str(startTime))
     allowed = False
-    anon = False
     logging.info ('###### WAITING FOR NEXT DAY')
     API = "jeuInfos"
     params = None
@@ -858,7 +844,6 @@ def waitNewDay(runTime):
         response = callAPI(fixedURL,API,params,0,'2','WAIT NEW DAY')
         if 'jeu'  in response:
             allowed = True
-            VTWOQUOTA = False            
     logging.info ('###### FINISHED WAITING')
     return
 
@@ -880,7 +865,6 @@ def callAPI(URL, API, PARAMS, CURRSSID,Version='',tolog=''):
     response = None
     logging.debug ('###### CALLING API ')
     logging.debug ('##### ACTUAL CALL TO API '+API)
-    data = {}
     retJson = None
     logging.debug ('###### GOING TO CALL API URL')
     response = callAPIURL(callURL)
@@ -1003,8 +987,8 @@ def validateImage(imagefile):
         if os.path.islink(imagefile):
             logging.debug ('###### IT IS A SYMLONK SO ASSUMING IMAGE IS OK')
             return True
-        im=Image.open(imagefile)
-        logging.debug ('###### IMAGE SEEMS TO BE OK')
+        im = Image.open(imagefile)
+        logging.debug ('###### IMAGE SEEMS TO BE OK '+str(im))
         return True
     except Exception as e:
         logging.debug ('###### IMAGE IS CORRUPT '+str(e))
@@ -1069,12 +1053,13 @@ def getImage(medialist,num,imgtype):
         logging.debug ('###### MEDIA LIST IS A LIST NOW')
     for media in medialist:
         logging.debug ('###### MEDIA TYPE IS '+media['type'])
+        URL = media['url']
         if media['type'].upper() == imgtype.upper():
-            if 'screenscraper' in media['url']:
+            if 'screenscraper' in URL:
                 mediaFormat = media['format']
             else:
                 mediaFormat = URL[URL.rindex('.')+1:]
-            mediaURL = media['url']
+            mediaURL = URL
             return grabMedia(mediaURL,tmpdir+'image'+str(num)+'.'+mediaFormat)
     logging.debug ('###### NO IMAGE FOUND ')
     return ''
@@ -1206,7 +1191,6 @@ def deleteHashCache(file):
     logging.debug ('####### GOING TO REMOVE HASH CACHE FOR '+file)
     sql = "DELETE FROM filehashes WHERE file = %s"
     val = (file, )
-    connected = False
     logging.debug ('###### TRYING TO DELETE INFO IN HASH DB FOR '+file)
     result,success = queryDB(sql,val,True,mydb)
     if not success:
@@ -1480,13 +1464,6 @@ def processZipFile(path,filename,sysid):
     logging.debug('###### GAMEID FOUND INSIDE ZIP IS '+str(gameId))
     return gameId
 
-def process7ZFile(filename,sysid):
-    logging.debug ('###### PROCESSING ZIPFILE '+zipfile)
-    result = extractZipFile(zipfile,proczfile,path)
-    gameId = locateShainDB(sha1(filename),md5(filename),crc(filename),filename,sysid)
-    return gameId
-
-
 def processZip(path,zipfile,CURRSSID,extensions,sysid):
     logging.debug ('###### PROCESSING ZIPFILE '+zipfile)
     zipfile,gameinfo = processFile (path,zipfile,CURRSSID,True,sysid)
@@ -1681,7 +1658,6 @@ def getRomFiles(path,acceptedExtens):
 def grabData(system, path, CURRSSID, acceptedExtens):
     ### WE'RE ABOUT TO PROCESS A SYSTEM
     logging.debug ('###### GRAB DATA START')
-    newfile = True
     ### CREATE ROOT ELEMENT FOR GAMELIST
     tree = ET.ElementTree()
     ### CREATE GAMELIST ELEMENT
@@ -1736,7 +1712,7 @@ def grabData(system, path, CURRSSID, acceptedExtens):
                 else:
                     ### NO, NOTIFY ERROR
                     logging.error('##### CANNOT GET XML FOR FILE '
-                                  + procfile + ' WITH SHA1 ' + sha1offile)
+                                  + procfile + ' WITH SHA1 ' + sha1(procfile))
             else:
                 ### NO, SO JUST INFORM WE COULDN'T
                 logging.info('##### COULD NOT SCRAPE ' + procfile + ' ')
@@ -1847,7 +1823,8 @@ def processCompressedFile(filepath,filename,systemid,exten):
     if exten == 'ZIP':
         gameId = processZipFile(filepath,filename,systemid)
     if exten == '7Z':
-        gameId = process7ZFile(filepath,filename,systemid)
+        logging.error ('###### 7Z NOT YET IMPLEMENTED, SORRY')
+        #gameId = process7ZFile(filepath,filename,systemid)
     return gameId
 
 
@@ -1943,7 +1920,7 @@ def updateDB(mysha1,response):
         return success
     else:
         logging.debug ('###### THERE WAS A PROBLEM WITH RESPONSE FROM API')
-        return false
+        return False
 
 def deleteHashFromDB(filename):
     sql = 'DELETE FROM filehashes WHERE file = "%s"'
@@ -1973,7 +1950,6 @@ def getGameInfo(CURRSSID, pathtofile, file, mymd5, mysha1, mycrc, sysid):
         return file,'ERROR'
     logging.debug ('###### GETTING GAME INFORMATION')
     ### THIS IS THE NAME OF THE API WE HAVE TO CALL
-    API = "jeuInfos"
     ### INITIALIZE PARAMETERS, STARTING BY THE FIXED ONES (SEE CONFIG)
     params = None
     params = dict(fixParams)
@@ -2000,9 +1976,6 @@ def getGameInfo(CURRSSID, pathtofile, file, mymd5, mysha1, mycrc, sysid):
         response['jeu']['id']='0'        
     else:
         ### WE DID GET A RESPONSE
-        ### THIS VARIABLE INDICATES IF WE NEED TO UPDATE THE DB OR NOT, BY DEFAULT WE DO
-        doupdate = True
-        ### CHECK IF WE HAVE A SYSTEM ID IN THE RESPONSE
         ### DID WE GET A QUOTA LIMIT?
         if response == 'QUOTA' or response =='ERROR':
             ### YES, SO RETURN TO SKIP THE FILE IF POSSIBLE
@@ -2543,7 +2516,7 @@ def deleteFile (file):
             os.remove(file)
         logging.info ('##### DELETED FILE '+file)
     except Exception as e:
-        logging.error ('##### COULD NOT DELETE FILE '+file)
+        logging.error ('##### COULD NOT DELETE FILE '+file+' : '+str(e))
 
 def cleanGameList(path):
     with open(path, 'r') as xml_file:
@@ -2586,7 +2559,6 @@ def cleanGameList(path):
                     logging.debug ('###### DELETED VIDEO '+video)
                 except Exception as e:
                     logging.error ('###### COULD NOT DELETE '+video+' '+str(e))
-            updateGameID (file,sha,'')
             deleteHashCache(file) 
             logging.debug ('###### REMOVED '+file+' WITH HASH '+sha)
 
@@ -2614,11 +2586,6 @@ def multiVersion(filename):
         checkreg = '\([H|h][A|a][C|c][K|k][^\)]*\)|\([P|p][R|o][T|t][O|o][T|t][Y|y][P|p][E|e][^\)]*\)|\([D|d][E|e][M|m][O|o][^\)]*\)|\([S|s][A|a][M|m][P|p][L|l][E|e][^\)]*\)|\([B|b][E|e][T|t][A|a][^\)]*\)'
         matchs = re.search(checkreg,filename)
     return matchs
-
-#### NOT USED YET, NEED TO CHECK IF IT MAKES SENSE
-def specialLabel(filename):
-    checkreg = '^\([D|d][I|i][S|s][K\k][^\)]*\)|\([S|s][I|i][D|d][E|e][^\)]*\)|\([D|d][I|i][S|s][C|c][^\)]*\)|\([T|t][A|a][P|p][E|e][^\)]*\)|\([F|f][I|i][L|l][E|e][^\)]*\)'
-
 
 def cleanSys(system):
     ### Get all systems from XML
@@ -2663,7 +2630,7 @@ def updateFile(path,localSHA,localCRC,localMD):
     else:
         matchs = multiDisk(path)
         vmatchs = multiVersion(path)
-        cmatchs = multCountry(path)
+        cmatchs = multiCountry(path)
         if cmatchs:
             destFile = filepath+thisGame['jeu']['nom']+' '+cmatchs.group(0).replace('_',' ')
         else:
@@ -2759,17 +2726,17 @@ def insertSystemInLocalDb(system):
     try:
         retropie = system['noms']['nom_retropie']
     except Exception as e:
-        logging.debug ('###### COULD NOT FIND RETROPIE NAME')
+        logging.debug ('###### COULD NOT FIND RETROPIE NAME '+str(e))
         retropie = ''
     try:
         launchbox = system['noms']['nom_launchbox']
     except Exception as e:
-        logging.debug ('###### COULD NOT FIND LAUNCHBOX NAME')
+        logging.debug ('###### COULD NOT FIND LAUNCHBOX NAME '+str(e))
         launchbox = ''
     try:
         hyperspin = system['noms']['nom_hyperspin']
     except Exception as e:
-        logging.debug ('###### COULD NOT FIND HYPERSPIN NAME')
+        logging.debug ('###### COULD NOT FIND HYPERSPIN NAME '+str(e))
         hyperspin = ''
     if (not result) or result == []:
         logging.debug ('###### GOING TO INSERT IN SYSTEMS TABLE')
@@ -2792,7 +2759,7 @@ def insertEditorInLocalDb(edid,edname):
 	    edname = edname[:99]
         sqlst = 'INSERT INTO editors (id,text) values (%s,%s)'
         values = (str(edid),edname)
-        result,success = queryDB(sqlst,(),True,mydb)
+        result,success = queryDB(sqlst,values,True,mydb)
         return success
 
 def insertGameNamesInDB(id,names,doupdate):
@@ -2851,7 +2818,7 @@ def insertSynopsisInDB(id,synopsis,doupdate):
             result,success = queryDB(sqlst,values,True,mydb)
         elif doupdate:
             sqlst = 'UPDATE gameSynopsis SET langue=%s ,text=%s where id=%s'
-            values = (name['langue'],name['text'],result)
+            values = (syn['langue'],syn['text'],result)
             result,success = queryDB(sqlst,values,True,mydb)
 
 def insertGameRomsInDB(id,roms,sysid,doupdate):

@@ -3148,14 +3148,27 @@ def locateRomInfo(pagehtml,ssid):
             logging.debug('###### GAME ID IS '+str(gid))
             getGameFromAPI(gid,ssid,True)
         else:
-            logging.error ('###### ROM DOES NOT EXIST IN SCREENSCRAPER')
+            logging.error ('###### ROM DOES NOT EXIST IN SCREENSCRAPER ....')
     except Exception as e:
         logging.error ('###### CANNOT GET ROM INFO '+str(e))
     return
 
 def getRomPage(romid,ssid):
     URL = 'https://www.screenscraper.fr/rominfos.php?&romid='+str(romid)
-    req = requests.get(URL)
+    success = False
+    retries = 10
+    while not success and retries > 1:
+        try:
+            req = requests.get(URL)
+            success = True
+        except requests.exceptions.Timeout:
+            logging.error ('###### REQUEST TIMED OUT')
+            retries = retries - 1 
+        except requests.exceptions.TooManyRedirects:
+            logging.error ('###### URL SEEMS TO BE WRONG '+URL)
+        except requests.exceptions.RequestException as e:
+            logging.error ('###### UNHANDLED ERROR '+str(e))
+            retries = retries -1
     logging.debug ('###### GOT BACK: '+req.text)
     locateRomInfo(req.text,ssid)
     return

@@ -3,8 +3,7 @@
 from shutil import copyfile
 import csv
 import ast
-import urllib2
-import urllib
+import requests
 import json
 import xml.etree.ElementTree as ET
 import glob
@@ -15,6 +14,7 @@ import sys
 import subprocess
 import logging
 import random
+import urllib
 from zipfile import ZipFile
 from xml.dom import minidom
 import pymysql as mysql
@@ -438,13 +438,13 @@ def getV2CallFromDB(URL):
         return ''
 
 def doV2URLRequest(URL):
-    request = urllib2.Request(URL)
     response = ''
     timeout = True
     tries = 10
     while timeout and tries > 0:
         try:
-            response = urllib2.urlopen(request,timeout=60).read()
+            req = requests.get(URL)
+            response = req.text
             ## TODO REMOVE
             if response[0]=='<':
                 try:
@@ -477,11 +477,11 @@ def doV2URLRequest(URL):
 
 def callURL(URL):
     logging.debug ('###### CALLING URL '+URL)
-    request = urllib2.Request(URL)
     response = ''
     try:
         logging.debug ('###### ATCUAL CALL')
-        response = urllib2.urlopen(request,timeout=60).read()
+        req = requests.get(URL)
+        response = req.text
         logging.debug ('###### GOT A RESPONSE')
         return response
     except Exception as e:
@@ -857,7 +857,13 @@ def callAPI(URL, API, PARAMS, CURRSSID,Version='',tolog=''):
         return 'QUOTA'
     logging.debug ('###### CALLING API WITH EXTRA '+tolog)
     ### BUILD QUERY
-    url_values = urllib.urlencode(PARAMS)
+    try:
+        ### Python 3
+        url_values = urllib.parse.urlencode(PARAMS)
+    except:
+        ### Python 2
+        url_values = urllib.urlencode(PARAMS)
+
     API = Version+'/'+API+".php"
     callURL = URL+API+"?"+url_values
     ### CREATE EMPTY VARIABLES
@@ -1069,13 +1075,13 @@ def doMediaDownload(medialist,destfile,path,hash):
     if (not(os.path.isfile(destfile)) and ('images' in destfile)) or UPDATEDATA:
         logging.debug('###### GOING TO DOWNLOAD COMPOSITE SCREEN '+destfile)
         img1 = getImage(medialist,random.randint(0,10000),'mixrbv1')
-        if img1 <> '':  
+        if img1 != '':  
             logging.debug ('###### WE GOT A COMPOSITE')
             shutil.move(img1,destfile)
             return
         logging.debug ('###### NO COMPOSITE FOUND, CREATING ONE - DOWNLOADING SCREENSHOT')
         img1 = getImage(medialist,random.randint(0,10000),'ss')
-        if (img1 <> ''):
+        if (img1 != ''):
             logging.debug('###### GOING TO DOWNLOAD BOXART')
             img2 = getImage(medialist,random.randint(0,10000),'box-3D')
             generateImage(img1,img2,destfile)
@@ -1437,7 +1443,7 @@ def processZipFile(path,filename,sysid):
             gameId = 0
             if result:
                 if '/' in zfile:
-		            unzipfile = '/tmp/'+zfile[zfile.rindex('/'):]
+	                unzipfile = '/tmp/'+zfile[zfile.rindex('/'):]
                 else:
                     unzipfile = '/tmp/'+zfile
                 logging.debug ('###### RESULT FILE OF DECOMPRESSION IS '+str(unzipfile))
@@ -2340,7 +2346,7 @@ def fuzzyMatch (a,b):
     mparts = 0
     for bpart in bparts:
         for apart in aparts:
-	    if apart == bpart:
+            if apart == bpart:
                 mparts = mparts + 1
                 continue
     if mparts >= len(bparts) and mparts >= len(aparts):
@@ -2625,7 +2631,7 @@ def updateFile(path,localSHA,localCRC,localMD):
     localfile,thisGame = getGameInfo(0,path,path[path.rindex('/')+1:],localMD,localSHA,localCRC,0)
     if thisGame == 'QUOTA' or thisGame =='' or thisGame=='ERROR':
         ### The game information is not complete, better not to process
-        print 'SKIPPING '+localSHA
+        logging.debug ('###### SKIPPING '+localSHA)
         return
     else:
         matchs = multiDisk(path)
@@ -2756,7 +2762,7 @@ def insertEditorInLocalDb(edid,edname):
     if (not result) or result == []:
         logging.debug ('###### GOING TO UPDATE EDITORS TABLE')
         if len(edname) >  100:
-	    edname = edname[:99]
+	        edname = edname[:99]
         sqlst = 'INSERT INTO editors (id,text) values (%s,%s)'
         values = (str(edid),edname)
         result,success = queryDB(sqlst,values,True,mydb)

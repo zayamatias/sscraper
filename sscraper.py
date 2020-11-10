@@ -525,16 +525,16 @@ def tryToFixResponse(newresponse):
     return newresponse
 
 
-def callAPIURL(URL):
+def callAPIURL(URL,forceCall=False):
     #### ACTUAL CALL TO THE API
     ## Check if it is a v2 Call first
     response=''
     logging.debug ('####### GOING TO CALL URL '+URL)
     v2 = re.search('\/[a|A][P|p][i|I]2\/',URL)
     logging.debug('###### IS V2 '+str(v2))
-    if v2:
+    if v2 and forceCall:
         response = getV2CallFromDB(URL)
-    else:
+    elif not v2:
         logging.debug ('###### V1 CALLS ARE OVER, CHECK WHY YOU WANT TO CALL THIS '+str(URL))
         return 'ERROR'
     if response != '':
@@ -871,7 +871,7 @@ def waitNewDay(runTime):
     logging.info ('###### FINISHED WAITING')
     return
 
-def callAPI(URL, API, PARAMS, CURRSSID,Version='',tolog='',returnRaw=False):
+def callAPI(URL, API, PARAMS, CURRSSID,Version='',tolog='',returnRaw=False,forceCall=False):
     ## REMOVE CRC AND MD5, TENDS TO FAIL IN v2
     PARAMS.pop('md5',None)
     PARAMS.pop('crc',None)   
@@ -896,7 +896,7 @@ def callAPI(URL, API, PARAMS, CURRSSID,Version='',tolog='',returnRaw=False):
     logging.debug ('##### ACTUAL CALL TO API '+API)
     retJson = None
     logging.debug ('###### GOING TO CALL API URL')
-    response = callAPIURL(callURL)
+    response = callAPIURL(callURL,forceCall)
     logging.debug ('###### CALLED API URL')
     logging.debug(response)
     if response == 'QUOTA':
@@ -3125,7 +3125,7 @@ def getGameFromAPI(gameid,ssid,doupdate):
     except:
         logging.error ('###### CANNT CREATE PARAMETERS')
     logging.debug('###### GOING TO CALL THE API FOR GAMEID '+str(gameid))
-    response = callAPI(fixedURL,'jeuInfos',params,currssid,'2','UPDATE GAME INFO ',True)
+    response = callAPI(fixedURL,'jeuInfos',params,currssid,'2','UPDATE GAME INFO ',True,True)
     shrtparams ='output=json&gameid='+str(gameid)
     #### HAVE TO UPDATE THE LOCALDB CALL
     logging.debug('###### UPDATING RESPONSE FOR APICACHE GAMEID '+str(gameid))

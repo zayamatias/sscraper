@@ -2,7 +2,7 @@ lhafile==0.2.2
 pymysql==0.10.1
 numpy==1.16.6
 olefile==0.46
-Pillow==6.2.2
+Pillow==7.1.0
 PyBluez==0.22
 pycryptodomex==3.6.1
 pymediainfo==4.1

@@ -76,7 +76,7 @@ The switch '--rename' will fetch all games in the local DB, and try to rename fi
 
 Try --importgames (start_game_id end_game_id) to start download game information into the local DB starting from game_id, data will be stored locally so you would still be able to scrap roms regardless if the site is down or your quota is over. Of coure, this is a super lengthy process that can take several days depending on your quota limits, connecion, etc...
 
-## get new roms mode
+## Get new roms mode
 
 Try --getroms (start_rom_id end_rom_id) to get latest roms, it will get the game id for the new roms, update the DB for the game and of course add the roms to the local DB. Thisis also a slow process, so patience.
 

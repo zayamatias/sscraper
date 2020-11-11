@@ -38,7 +38,7 @@ parser = argparse.ArgumentParser(description='ROM scraper, get information of yo
 parser.add_argument('--update', help='Update local DB information from screenscraper',action='store_true')
 parser.add_argument('--clean', help='Clean a system from the DB, deletes all records from files', action='store_true')
 parser.add_argument('--rename', help='Rename files to match the actual game name in the DB', action='store_true')
-parser.add_argument('--importgames', help='Start importing DB at gameid',nargs=1)
+parser.add_argument('--importgames', help='Start importing DB at gameid',nargs=2)
 parser.add_argument('--localdb', help='Use only local DB for scraping (except media)', action='store_true')
 parser.add_argument('--getroms', help='Get new roms starting from ID and ending in ID', nargs=2)
 parser.add_argument('--sort', help='Sorts all your roms and stores them by system in a new directroy structure',nargs=1)
@@ -210,6 +210,7 @@ class Game:
 
 def queryDB(sql,values,directCommit,thisDB,logerror=False,retfull=False):
     logging.debug ('+++++++ '+sql)
+    logging.debug ('+++++++ '+str(values))
     mycursor = getDBCursor(thisDB)
     if mycursor:
         logging.debug('###### GOT A CURSOR FOR THE DB')
@@ -387,8 +388,11 @@ def updateInDBV2Call(api,params,response):
         logging.error ('###### COULD NOT INSERT INTO DB V2 API CACHE')
         return False
 
-def searchInDBV2Call(api,params):
+def searchInDBV2Call(api,params,force):
     ### Try to see if it is in cache
+    if force:
+        logging.debug ('###### FORCED TO RETURN EMPTY RESULT')
+        return ''
     result = ''
     logging.debug ('###### CONNECTING TO DB TO LOCATE CACHED RESULT FOR V2 CALL')
     sql = "SELECT result FROM apicache WHERE apiname = %s AND parameters = %s"
@@ -447,9 +451,9 @@ def getV2CallInfo(URL):
         logging.debug ('###### PARAMETERS '+dbparams)
     return apiname,dbparams
 
-def getV2CallFromDB(URL):
+def getV2CallFromDB(URL,forceCall):
     apiname,dbparams = getV2CallInfo(URL)
-    response = searchInDBV2Call(apiname,dbparams)
+    response = searchInDBV2Call(apiname,dbparams,forceCall)
     logging.debug ('###### AFTER SEARCH IN DB')
     if response:
         logging.debug ('###### RETURNING RESPONSE')
@@ -500,7 +504,20 @@ def callURL(URL):
     response = ''
     try:
         logging.debug ('###### ATCUAL CALL')
-        req = requests.get(URL)
+        success = False
+        retries = 10
+        while not success and retries > 1:
+            try:
+                req = requests.get(URL)
+                success = True
+            except requests.exceptions.Timeout:
+                logging.error ('###### REQUEST TIMED OUT')
+                retries = retries - 1 
+            except requests.exceptions.TooManyRedirects:
+                logging.error ('###### URL SEEMS TO BE WRONG '+URL)
+            except requests.exceptions.RequestException as e:
+                logging.error ('###### UNHANDLED ERROR '+str(e))
+                retries = retries -1
         response = req.text
         logging.debug ('###### GOT A RESPONSE')
         return response
@@ -532,8 +549,8 @@ def callAPIURL(URL,forceCall=False):
     logging.debug ('####### GOING TO CALL URL '+URL)
     v2 = re.search('\/[a|A][P|p][i|I]2\/',URL)
     logging.debug('###### IS V2 '+str(v2))
-    if v2 and forceCall:
-        response = getV2CallFromDB(URL)
+    if v2:
+        response = getV2CallFromDB(URL,forceCall)
     elif not v2:
         logging.debug ('###### V1 CALLS ARE OVER, CHECK WHY YOU WANT TO CALL THIS '+str(URL))
         return 'ERROR'
@@ -1815,7 +1832,7 @@ def findMissingGame(gameName,systemid,path,isArcade):
            (SELECT sys1.parent FROM systems sys1 WHERE sys1.id = %s))\
            AND ((gn.`text` LIKE %s) or (gr.romfilename LIKE %s))"
     val = (systemid,qName,qName)
-    results,success = queryDB(sql,val,False,mydb,True,True)
+    results,success = queryDB(sql,val,False,mydb,False,True)
     gameId = 0
     if results:
         logging.debug('###### THERE ARE RESULTS, WILL TRY TO MATCH WITH '+srchName)
@@ -2727,19 +2744,22 @@ def renameFiles():
             deleteHashFromDB (thisfile)
     logging.info ('###### - FINISHED FILE RENAMING PROCESS - TOTAL FILES PROCESSED '+str(procfiles))
 
-def insertDataInLocalDB(obj,table,doupdate):
-    sqlst= 'REPLACE INTO '+table+' '
-    columns = ''
-    values = ''
-    for key in obj.keys():
-        columns = columns + str(key) + ','
-        values = values + str(obj[key]) +','
-    columns = '('+columns[:-1]+')'    
-    values  = '('+values[:-1]+')'    
-        ## TODO CREATE SQL AND INSERT
-    sqlst = sqlst+columns+' VALUES '+values
-    logging.debug ('####### SQL STATEMENT GENERATED '+sqlst)
-    result,success = queryDB(sqlst,(),True,mydb)
+def insertGameDataInLocalDB(mygame,doupdate):
+    logging.debug ('###### GOING TO LOOK UP GAME ID '+str(mygame['id']))
+    sqlst = 'SELECT ID FROM games WHERE ID = %s'
+    values = (mygame['id'],)
+    result,success=queryDB(sqlst,values,False,mydb)
+    logging.debug ('###### SERCH RESULT GAVE BACK '+str(result))
+    if result != None:
+        sqlst = 'UPDATE games SET notgame = %s, topstaff = %s, rotation = %s, cloneof = %s, system =%s, editeur=%s, joueurs = %s WHERE id = %s'
+        values = (mygame['notgame'],mygame['topstaff'],mygame['rotation'],mygame['cloneof'],mygame['system'],mygame['editeur'],mygame['joueurs'],mygame['id'])
+        result,success=queryDB(sqlst,values,True,mydb)
+    else:
+        sqlst = 'INSERT INTO games (notgame,topstaff,rotation,cloneof,system,editeur,joueurs,id)\
+                 VALUES (%s,%s,%s,%s,%s,%s,%s,%s)'
+        values = (mygame['notgame'],mygame['topstaff'],mygame['rotation'],mygame['cloneof'],mygame['system'],mygame['editeur'],mygame['joueurs'],mygame['id'])
+        result,success=queryDB(sqlst,values,True,mydb)
+    logging.debug ('###### RESULT OF QUERY '+str(success))
     return success
 
 def insertSystemInLocalDb(system):
@@ -3026,6 +3046,15 @@ def insertGameInLocalDb(gameInfo,doupdate):
     except Exception as e:
         logging.error ('###### ATTRIBUTE TOPSTAFF NOT FOUND, CREATING DEFAULT FOR '+str(game['id']))
         game['topstaff'] = 0
+
+    try:
+        game['cloneof'] = gameInfo['cloneof']
+        if game['cloneof'] == None:
+            game['cloneof'] = 0
+    except Exception as e:
+        logging.error ('###### ATTRIBUTE CLONEOF NOT FOUND, CREATING DEFAULT FOR '+str(game['id']))
+        game['cloneof'] = 0
+
     try:
         game['joueurs'] = gameInfo['joueurs']['text']
     except Exception as e:
@@ -3053,7 +3082,7 @@ def insertGameInLocalDb(gameInfo,doupdate):
         logging.error ('###### ATTRIBUTE EDITOR NOT FOUND, CREATING DEFAULT FOR '+str(game['id']))
         game['editeur'] = 0
     logging.debug ('###### GAME INFO IS '+str(game))
-    insertDataInLocalDB(game,'games',doupdate)
+    insertGameDataInLocalDB(game,doupdate)
     try:
         logging.debug ('###### NAMES ARE '+str(gameInfo['noms']))
         insertGameNamesInDB(game['id'],gameInfo['noms'],doupdate)
@@ -3125,7 +3154,7 @@ def getGameFromAPI(gameid,ssid,doupdate):
     except:
         logging.error ('###### CANNT CREATE PARAMETERS')
     logging.debug('###### GOING TO CALL THE API FOR GAMEID '+str(gameid))
-    response = callAPI(fixedURL,'jeuInfos',params,currssid,'2','UPDATE GAME INFO ',True,True)
+    response = callAPI(fixedURL,'jeuInfos',params,currssid,'2','UPDATE GAME INFO ',True,doupdate)
     shrtparams ='output=json&gameid='+str(gameid)
     #### HAVE TO UPDATE THE LOCALDB CALL
     logging.debug('###### UPDATING RESPONSE FOR APICACHE GAMEID '+str(gameid))
@@ -3218,10 +3247,12 @@ if migrateDB:
     maxssid = len(config.ssid)
     currssid = 0
     gameid = int(startid)
+    endid =int(endid)
     if endid == 0:
         numGames = 213650
     else:
         numGames = endid
+    logging.debug('###### MIGRATING GAMES FROM '+str(gameid)+' UNTIL '+str(endid))
     response = 'QUOTA'
     #### THis game with id Zero is going to be used to handle unknown roms
     zeroGame={'id':'0'}

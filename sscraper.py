@@ -1111,6 +1111,7 @@ def getImage(medialist,num,imgtype):
                 mediaFormat = URL[URL.rindex('.')+1:]
             mediaURL = URL
             return grabMedia(mediaURL,tmpdir+'image'+str(num)+'.'+mediaFormat)
+    logging.debug ('###### NO IMAGE IN THE DB, CAN WE TRY TO FIGURE OUT IF IT EXISTS ANYWAY?')
     logging.debug ('###### NO IMAGE FOUND ')
     return ''
 

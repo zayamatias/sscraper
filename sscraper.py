@@ -34,6 +34,15 @@ import shutil
 ### --clean: removes all information from a system in the local DB, needs to have system specified
 ### --rename: will look into the game name as downloaded from the site and rename the file accordingly
 
+try:
+    logging.basicConfig(filename='sv3log.txt', filemode='a',
+                        format='%(asctime)s - %(process)d - %(name)s - %(levelname)s - %(message)s',
+                        level=logging.INFO)
+    logging.debug("###### LOGGING SERVICE STARTED")
+except Exception as e:
+    logging.debug('###### ERROR CREATING LOG '+str(e))
+
+
 parser = argparse.ArgumentParser(description='ROM scraper, get information of your roms from screenscraper.fr')
 parser.add_argument('--update', help='Update local DB information from screenscraper',action='store_true')
 parser.add_argument('--clean', help='Clean a system from the DB, deletes all records from files', action='store_true')
@@ -43,6 +52,7 @@ parser.add_argument('--localdb', help='Use only local DB for scraping (except me
 parser.add_argument('--getroms', help='Get new roms starting from ID and ending in ID', nargs=2)
 parser.add_argument('--sort', help='Sorts all your roms and stores them by system in a new directroy structure',nargs=1)
 parser.add_argument('--config', help='emulation station configuration file to read',nargs=1)
+parser.add_argument('--listmissing', help='creates a list of missing games per system on the file of your choice',nargs=1)
 
 argsvals = vars(parser.parse_args())
 
@@ -73,15 +83,17 @@ try:
 except:
     getROMS = False
 
-UPDATEDATA = update
-
 try:
-    logging.basicConfig(filename='sv2log.txt', filemode='a',
-                        format='%(asctime)s - %(process)d - %(name)s - %(levelname)s - %(message)s',
-                        level=logging.INFO)
-    logging.debug("###### LOGGING SERVICE STARTED")
+    listMissingFile = argsvals['listmissing'][0]
+    if os.path.isfile(listMissingFile):
+        os.remove(listMissingFile)
+    listMissing = True
 except Exception as e:
-    logging.debug('###### ERROR CREATING LOG '+str(e))
+    listMissing = False
+    listMissingFile = ''
+
+
+UPDATEDATA = update
 
 sysconfig = config.sysconfig
 
@@ -942,10 +954,16 @@ def callAPI(URL, API, PARAMS, CURRSSID,Version='',tolog='',returnRaw=False,force
                 logging.debug ('###### '+str(result))
             new_response = result.replace('\x0d\x0a','\\r\\n').replace('\x0a','').replace('\x09','').replace('\x0b','').replace('  ','').replace('\r','')
             try:
-                retJson = json.loads(new_response)
+                retJson = ast.literal_eval(new_response)
             except Exception as e:
-                logging.error ('####### '+str(new_response))
-                sys.exit()
+                try:
+                    new_response = new_response.replace('\\r\\n','')
+                    retJson = ast.literal_eval(new_response)
+                except Exception as e:
+                    logging.error ('####### EXITING NEED TO ANLYZE THIS ERROR' )
+                    logging.error ('####### '+str(e))
+                    logging.error ('####### '+str(new_response))
+                    sys.exit()
     else:
         logging.error ('###### CHECK RESPONSE '+str(response))
         return 'ERROR'
@@ -976,8 +994,10 @@ def callAPI(URL, API, PARAMS, CURRSSID,Version='',tolog='',returnRaw=False,force
             else:
                 logging.error ('###### ERROR IN GETTING RESPONSE '+str(e))
     if returnRaw:
+        logging.debug('###### RETURNING RAW JSON')
         return result
     else:
+        logging.debug ('###### RETURNING DICT')
         return myJson
     
 
@@ -1706,7 +1726,7 @@ def getRomFiles(path,acceptedExtens):
         filelist = []
     return filelist
 
-def grabData(system, path, CURRSSID, acceptedExtens):
+def grabData(system, path, CURRSSID, acceptedExtens,gamesList):
     ### WE'RE ABOUT TO PROCESS A SYSTEM
     logging.debug ('###### GRAB DATA START')
     ### CREATE ROOT ELEMENT FOR GAMELIST
@@ -1741,17 +1761,34 @@ def grabData(system, path, CURRSSID, acceptedExtens):
             try:
                 gameinfo['localpath']=file
                 logging.debug ('###### LOCAL PATH '+gameinfo['localpath'])
+            except Exception as e:
+                ### THERE WAS AN ERROR CREATING GAME INSTANCE, NOTIFY
+                logging.error ('###### COULD NOT FIND LOCALPATH '+str(e))
+            try:
                 gameinfo['abspath']=path
                 logging.debug ('###### ABSOLUTE PATH  '+gameinfo['abspath'])
+            except Exception as e:
+                ### THERE WAS AN ERROR CREATING GAME INSTANCE, NOTIFY
+                logging.error ('###### COULD NOT FIND ABSPATH '+str(e))
+            try:
                 gameinfo['localhash']=sha1(path+'/'+file).upper()
                 logging.debug ('###### SHA1  '+gameinfo['localhash'])
+            except Exception as e:
+                ### THERE WAS AN ERROR CREATING GAME INSTANCE, NOTIFY
+                logging.error ('###### COULD NOT FIND SHA1 '+str(e))
+            try:
                 ### YES, CREATE A GAME INSTANCE THEN
                 thisGame = None
                 thisGame = Game(gameinfo)
             except Exception as e:
-                ### THERE WAS AN ERROR CREATING GAME INSTANCE, NOTIFY
                 logging.error ('###### COULD NOT CREATE GAME INSTANCE '+str(e))
-            ## SO, COULD WE CREATE A GAME INSTANCE?
+            logging.debug ('###### REMOVING GAME FROM MISSING LIST')
+            try:
+                removeid = int(gameinfo['jeu']['id'])
+                logging.debug('###### ID TO REMOVE '+str(removeid))
+                gamesList.remove(removeid)
+            except Exception as e:
+                logging.debug ('###### STRANGE, THIS ID WAS NOT IN THE LIST OF GAMES FOR THE SYSTEM, POSSIBLY MULTIDISC '+str(e))
             if thisGame is not None:
                 ### YES WE DID, SO GET THE XML FOR THIS GAME
                 myGameXML = thisGame.getXML()
@@ -1798,7 +1835,8 @@ def grabData(system, path, CURRSSID, acceptedExtens):
     logging.info ('###### CLEANING BEZELS')
     destpath = path.replace('roms','overlays')
     cleanMedia (destpath,'*.png')
-    logging.debug ('###### DONE')
+    logging.debug ('###### DONE SYSTEM')
+    return gamesList
 
 def isArcadeSystem(sysid):
     global arcadeSystems
@@ -2208,8 +2246,51 @@ def copyRoms (systemid,systemname,path,CURRSSID,extensions,outdir):
     logging.info ('###### FINISHED SYSTEM '+str(systemname))
     return foundSys
 
+def getAllGames(sysid):
+    ### return a list with all game ID's for that system
+    sql = 'SELECT DISTINCT ID FROM games where system = %s'
+    vals = (sysid,)
+    gameList = queryDB(sql,vals,False,mydb,False)
+    logging.debug (type(gameList[0]))
+    try:
+        retGameList=[]
+        for restup in gameList[0]:
+            retGameList.append(int(restup[0]))
+        logging.debug (str(retGameList))
+        return retGameList
+    except Exception as e:
+        logging.error ('####### ERROR '+str(e))
+        return []
 
-def scrapeRoms(CURRSSID,sortRoms=False,outdir=''):
+def writeToMissingFile(notHaveList,listMissingFile,system):
+    logging.debug ('###### GOING TO WRITE MISSING FILE ['+listMissingFile+']')
+    f = open(listMissingFile,'a+')
+    try:
+        f.write('SYSTEM : '+system)
+    except Exception as e:
+        logging.error ('###### SYSTEM IS INVALID '+str(e))
+    for id in notHaveList:
+        query = "SELECT  CONCAT ( 'GAME NAMES:\r\n',COALESCE(names_result,'NOT KNOWN NAMES'),'\r\nROMS:\r\n',\
+                 COALESCE(roms_result,'NOT KNOWN ROMS')) as missing_game\
+                 FROM (SELECT gr.gameid as mygameid,\
+                 GROUP_CONCAT(DISTINCT 'Game Name : ',CONVERT(gn.`text` USING ascii),'\r\n'  SEPARATOR '' ) as names_result,\
+                 GROUP_CONCAT(DISTINCT 'Rom Name : ',gr.romfilename,'\r\n' SEPARATOR '' ) as roms_result\
+                 FROM gameRoms gr\
+                 LEFT JOIN gameNames gn ON gn.gameid = gr.gameid WHERE gr.gameid = %s ) as gameinfo"
+        vals = (id,)
+        result = queryDB(query,vals,False,mydb)
+        try:
+            f.write('\r\n\r\n----------------------------------------------------------------------------------------\r\n')
+            f.write(result[0])
+            f.write('----------------------------------------------------------------------------------------\r\n')
+        except Exception as e:
+            logging.error ('###### CANNOT WRITE TO MISSING FILE '+str(e))
+    f.write('++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++\r\n')
+    f.close()
+    sys.exit()
+
+
+def scrapeRoms(CURRSSID,listMissingFile,sortRoms=False,outdir=''):
     ### OPEN SYSTEM CONFIGURATION
     with open(sysconfig, 'r') as xml_file:
         tree = ET.ElementTree()
@@ -2326,7 +2407,12 @@ def scrapeRoms(CURRSSID,sortRoms=False,outdir=''):
                             if fsys not in newSystems and fsys['name'].upper() != 'UNKNOWN':
                                 newSystems.append(fsys)      
                     else:
-                        grabData(systemid, path, CURRSSID,extensions)
+                        sysGameList = getAllGames(systemid)
+                        notHaveList = grabData(systemid, path, CURRSSID,extensions,sysGameList)
+                        logging.debug('###### FILE FOR LIST OF MISSING GAMES IS ['+listMissingFile+']')
+                        if listMissingFile!='':
+                            writeToMissingFile(notHaveList,listMissingFile,sysname)
+                        logging.debug ('###### DO NOT HAVE LIST IS '+str(notHaveList))
                     ### WE GO TO NEXT USER INFO
                     CURRSSID = CURRSSID + 1
                     if CURRSSID == len(config.ssid):
@@ -3031,6 +3117,18 @@ def insertGameInLocalDb(gameInfo,doupdate):
     logging.debug ('###### GAMEINFO IS '+str(gameInfo))
     game = dict()
     try:
+        roms = gameInfo['roms']
+        logging.debug ('###### FOUND ROMS '+str(roms)+' '+str(len(roms)))
+    except:
+        logging.error('###### THIS GAME HAS NO ROMS SO I\'M NOT INSERTING IT')
+        return False
+    if len(roms) ==0:
+        logging.info('###### THIS GAME HAS NO ROMS SO I\'M NOT INSERTING IT')
+        return False
+    '''else:
+        return True
+    '''
+    try:
         game['id'] = gameInfo['id']
     except Exception as e:
         logging.error ('###### THERE IS NO GAME ID!, CANNOT DO ANYTHING')
@@ -3112,17 +3210,17 @@ def insertGameInLocalDb(gameInfo,doupdate):
     except Exception as e:
         logging.error ('###### COULD NOT FIND DATES FOR THE GAME -'+str(e)+' - DEFAULTING')
         ##dates = [{'region':'unk','text':'0'}]
-    return
+    return True
 
 def sortRoms(mainDir):
     logging.info ('###### STARTING ROM SORTING PROCESS, ORIGINAL ROMS WILL REMAIN UNTOUCHED')
-    systems = scrapeRoms(CURRSSID,True,mainDir)
+    systems = scrapeRoms(CURRSSID,'',True,mainDir)
     return systems
 
 if dbRename:
     ### Get all games from DB and rename filenames
     renameFiles()
-    scrapeRoms(CURRSSID)
+    scrapeRoms(CURRSSID,'')
     sys.exit(0)
 
 
@@ -3156,7 +3254,7 @@ def getGameFromAPI(gameid,ssid,doupdate):
         logging.error ('###### CANNT CREATE PARAMETERS')
     logging.debug('###### GOING TO CALL THE API FOR GAMEID '+str(gameid))
     response = callAPI(fixedURL,'jeuInfos',params,currssid,'2','UPDATE GAME INFO ',True,doupdate)
-    shrtparams ='output=json&gameid='+str(gameid)
+    shrtparams ='output=jsongameid='+str(gameid)
     #### HAVE TO UPDATE THE LOCALDB CALL
     logging.debug('###### UPDATING RESPONSE FOR APICACHE GAMEID '+str(gameid))
     logging.debug('###### '+str(response))
@@ -3166,7 +3264,11 @@ def getGameFromAPI(gameid,ssid,doupdate):
     if 'jeu' in response:
         logging.debug ('###### GOING TO UPDATE GAME IN DB (NORMALIZED)')
         response = callAPI(fixedURL,'jeuInfos',params,currssid,'2','UPDATE GAME INFO ') 
-        insertGameInLocalDb(response['jeu'],True)
+        success = insertGameInLocalDb(response['jeu'],True)
+        if not success:
+            logging.debug ('###### I COULD NOT INSERT GAME INTO DB BECAUSE IT DID NOT HAS ASSOCIATED ROMS')
+            updateInDBV2Call('jeuInfos.php',shrtparams,'NOT FOUND')
+            response =''    
     return response
 
 def locateRomInfo(pagehtml,ssid):
@@ -3253,7 +3355,7 @@ if migrateDB:
         numGames = 213650
     else:
         numGames = endid
-    logging.debug('###### MIGRATING GAMES FROM '+str(gameid)+' UNTIL '+str(endid))
+    logging.info('###### MIGRATING GAMES FROM '+str(gameid)+' UNTIL '+str(endid))
     response = 'QUOTA'
     #### THis game with id Zero is going to be used to handle unknown roms
     zeroGame={'id':'0'}
@@ -3273,8 +3375,9 @@ if migrateDB:
             sql = 'SELECT id from games where id = %s'
             val = (gameid,)
             exists,success = queryDB(sql,val,False,mydb)
-            if (str(exists) != str(gameid)) or UPDATEDATA:
-                insertGameInLocalDb(response['jeu'],UPDATEDATA)
+            if isinstance (response,dict):
+                if (str(exists) != str(gameid)) or UPDATEDATA:
+                    insertGameInLocalDb(response['jeu'],UPDATEDATA)
         if cnt == 50:
 	        mydb.commit()
 	        cnt = 0
@@ -3292,7 +3395,7 @@ if migrateDB:
     logging.info ('###### ALL DONE ######')
     sys.exit(0)
 ## Default behaviour
-scrapeRoms(CURRSSID)
+scrapeRoms(CURRSSID,listMissingFile)
 sys.exit(0)
 
 

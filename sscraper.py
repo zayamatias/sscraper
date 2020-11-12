@@ -35,7 +35,7 @@ import shutil
 ### --rename: will look into the game name as downloaded from the site and rename the file accordingly
 
 try:
-    logging.basicConfig(filename='sv3log.txt', filemode='a',
+    logging.basicConfig(filename='sv2log.txt', filemode='a',
                         format='%(asctime)s - %(process)d - %(name)s - %(levelname)s - %(message)s',
                         level=logging.INFO)
     logging.debug("###### LOGGING SERVICE STARTED")
@@ -2270,14 +2270,14 @@ def writeToMissingFile(notHaveList,listMissingFile,system):
     except Exception as e:
         logging.error ('###### SYSTEM IS INVALID '+str(e))
     for id in notHaveList:
-        query = "SELECT  CONCAT ( 'GAME NAMES:\r\n',COALESCE(names_result,'NOT KNOWN NAMES'),'\r\nROMS:\r\n',\
+        query = "SELECT  CONCAT ( 'SCREENSCRAPER LINK https://screenscraper.fr/gameinfos.php?gameid=%s\r\nGAME NAMES:\r\n',COALESCE(names_result,'NOT KNOWN NAMES'),'\r\nROMS:\r\n',\
                  COALESCE(roms_result,'NOT KNOWN ROMS')) as missing_game\
                  FROM (SELECT gr.gameid as mygameid,\
                  GROUP_CONCAT(DISTINCT 'Game Name : ',CONVERT(gn.`text` USING ascii),'\r\n'  SEPARATOR '' ) as names_result,\
                  GROUP_CONCAT(DISTINCT 'Rom Name : ',gr.romfilename,'\r\n' SEPARATOR '' ) as roms_result\
                  FROM gameRoms gr\
                  LEFT JOIN gameNames gn ON gn.gameid = gr.gameid WHERE gr.gameid = %s ) as gameinfo"
-        vals = (id,)
+        vals = (id,id)
         result = queryDB(query,vals,False,mydb)
         try:
             f.write('\r\n\r\n----------------------------------------------------------------------------------------\r\n')
@@ -2287,7 +2287,6 @@ def writeToMissingFile(notHaveList,listMissingFile,system):
             logging.error ('###### CANNOT WRITE TO MISSING FILE '+str(e))
     f.write('++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++\r\n')
     f.close()
-    sys.exit()
 
 
 def scrapeRoms(CURRSSID,listMissingFile,sortRoms=False,outdir=''):

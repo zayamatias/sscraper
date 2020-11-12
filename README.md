@@ -87,7 +87,7 @@ The --sort (directory) will sort all your roms to a destination directory, usefu
 ## List missing games from collection
 
 The --listmissing (path to file) will create a file with the name you selected containing all the missing games (present in screenscraper) from your collection. In order for this functionality to work properly, you would have to have imported the whole list of games from screenscraper using the 'clone DB mode'. Small sampe of the output:
-
+```
 SYSTEM : 3DO
 ----------------------------------------------------------------------------------------
 SCREENSCRAPER LINK https://screenscraper.fr/gameinfos.php?gameid=14307
@@ -114,3 +114,4 @@ Rom Name : Cinderella Fairytales (J).zip
 Rom Name : Hirata Shougo Interactive Ehon - Cinderella (Japan) (En,Ja,Fr).bin
 Rom Name : Hirata Shougo Interactive Ehon - Cinderella (Japan) (En,Ja,Fr).cue
 ----------------------------------------------------------------------------------------
+```

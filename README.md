@@ -84,3 +84,7 @@ Try --getroms (start_rom_id end_rom_id) to get latest roms, it will get the game
 
 The --sort (directory) will sort all your roms to a destination directory, usefull if you want o have a precise list of roms sorted by their system (a directory per system) and create a es_config.xml with all the updated directories and system names.
 
+## List missing games from collection
+
+The --listmissing (path to file) will create a file with the name you selected containing all the missing games (present in screenscraper) from your collection. In order for this functionality to work properly, you would have to have imported the whole list of games from screenscraper using the 'clone DB mode'
+

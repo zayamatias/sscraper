@@ -47,7 +47,8 @@ By default, running the script 'python sscraper.py' will:
 - It will delete and rebuild a new gamelist.xml file, so any addition you have done to this fie manually will be deleted.
 - It will add the (disk x) or (disc X) or (side x) or (tape x) information found in the filename to the game name.
 - It will download video and images (will compose the background + 3dBox if both are found and there is no composite present in screenscraper) and verify their integrity
-- It will download bezels and create the configuration files (tested only for RetroPie)
+- It will download bezels and create the configuration files (tested only for RetroPie) (disable with --nobezel)
+- It will download small marquee so it should work with https://github.com/losernator/PieMarquee2 (disable with --nomarquee)
 - It will create symlinks for duplicate images and videos in order to save space
 - If your daily quota is done, it will switch to anonymous mode and if this mode is disabled by screenscraper.fr then it will pause until the next day quota is reset
 - It will store all information in the local DB so you save precious scraping quota

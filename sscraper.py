@@ -34,15 +34,6 @@ import shutil
 ### --clean: removes all information from a system in the local DB, needs to have system specified
 ### --rename: will look into the game name as downloaded from the site and rename the file accordingly
 
-try:
-    logging.basicConfig(filename='sv2log.txt', filemode='a',
-                        format='%(asctime)s - %(process)d - %(name)s - %(levelname)s - %(message)s',
-                        level=logging.INFO)
-    logging.debug("###### LOGGING SERVICE STARTED")
-except Exception as e:
-    logging.debug('###### ERROR CREATING LOG '+str(e))
-
-
 parser = argparse.ArgumentParser(description='ROM scraper, get information of your roms from screenscraper.fr')
 parser.add_argument('--update', help='Update local DB information from screenscraper',action='store_true')
 parser.add_argument('--clean', help='Clean a system from the DB, deletes all records from files', action='store_true')
@@ -52,11 +43,32 @@ parser.add_argument('--localdb', help='Use only local DB for scraping (except me
 parser.add_argument('--getroms', help='Get new roms starting from ID and ending in ID', nargs=2)
 parser.add_argument('--sort', help='Sorts all your roms and stores them by system in a new directroy structure',nargs=1)
 parser.add_argument('--config', help='emulation station configuration file to read',nargs=1)
+parser.add_argument('--log', help='logfile output, by default sv2log.txt',nargs=1)
 parser.add_argument('--listmissing', help='creates a list of missing games per system on the file of your choice',nargs=1)
 parser.add_argument('--nobezel', help='Skips bezel downloads',action='store_true')
 parser.add_argument('--nomarquee', help='Skips marquee downloads',action='store_true')
 
 argsvals = vars(parser.parse_args())
+
+
+try:
+    logfile = argsvals['log'][0]
+except:
+    logfile = 'sv2log.txt'
+
+try:
+    logging.basicConfig(filename=logfile, filemode='a',
+                        format='%(asctime)s - %(process)d - %(name)s - %(levelname)s - %(message)s',
+                        level=logging.INFO)
+    logging.debug("###### LOGGING SERVICE STARTED")
+except Exception as e:
+    logging.debug('###### ERROR CREATING LOG '+str(e))
+
+try:
+    sysconfig = argsvals['config'][0]
+except:
+    sysconfig = config.sysconfig
+
 
 try:
     sortroms = argsvals['sort'][0]
@@ -113,8 +125,6 @@ except Exception as e:
 
 
 UPDATEDATA = update
-
-sysconfig = config.sysconfig
 
 tmpdir = config.tmpdir
 

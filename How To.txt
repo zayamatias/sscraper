@@ -1,8 +1,0 @@
-Find here some common scenarios and how to improve your scraping experience:
-
-I'd advise you to install DBeaver (https://dbeaver.io/) to fully take advante of this.
-
-Linking not found roms with their games:
-
-Whenever you run a scan of you roms, sscraper will assign gameid '0' to those that it cannot automatically match.
-If you run a query on the table gameRoms where gameid=0

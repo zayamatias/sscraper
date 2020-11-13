@@ -53,6 +53,8 @@ parser.add_argument('--getroms', help='Get new roms starting from ID and ending 
 parser.add_argument('--sort', help='Sorts all your roms and stores them by system in a new directroy structure',nargs=1)
 parser.add_argument('--config', help='emulation station configuration file to read',nargs=1)
 parser.add_argument('--listmissing', help='creates a list of missing games per system on the file of your choice',nargs=1)
+parser.add_argument('--nobezel', help='Skips bezel downloads',action='store_true')
+parser.add_argument('--nomarquee', help='Skips marquee downloads',action='store_true')
 
 argsvals = vars(parser.parse_args())
 
@@ -60,6 +62,23 @@ try:
     sortroms = argsvals['sort'][0]
 except:
     sortroms = ''
+
+global nobezel
+
+try:
+    nobezel = argsvals['nobezel']
+    nobezel = True
+except:
+    nobezel = False
+
+global nomarquee
+
+try:
+    nomarquee = argsvals['nomarquee']
+    nomarquee = True
+except:
+    nomarquee = False
+
 
 localdb = argsvals['localdb']
 update = argsvals['update']
@@ -1130,8 +1149,11 @@ def getImage(medialist,num,imgtype):
             else:
                 mediaFormat = URL[URL.rindex('.')+1:]
             mediaURL = URL
-            return grabMedia(mediaURL,tmpdir+'image'+str(num)+'.'+mediaFormat)
-    logging.debug ('###### NO IMAGE IN THE DB, CAN WE TRY TO FIGURE OUT IF IT EXISTS ANYWAY?')
+            tempfile = tmpdir+'image'+str(num)+'.'+mediaFormat
+            if os.path.isfile(tempfile):
+                logging.debug ('###### DELETING FILE THAT WAS PROBABLY LEFT AFTER A KILL OR SOMETHING')
+                os.remove (tempfile)
+            return grabMedia(mediaURL,tempfile)
     logging.debug ('###### NO IMAGE FOUND ')
     return ''
 
@@ -1163,15 +1185,49 @@ def doMediaDownload(medialist,destfile,path,hash):
         logging.error('###### FILE IS ALREADY PRESENT - SKIPPING DOWNLOAD')
         return ''
 
+def processMarquees(medialist,destfile,path,hash,zipname):
+    logging.debug('###### DO I HAVE TO SKIP MARQUEES '+str(nomarquee))
+    if nomarquee:
+        return ''
+    logging.debug ('###### PROCESS MARQUEE FOR '+zipname)
+    marqdir = path.replace('roms','PieMarquee2/marquee')
+    try:
+        if not os.path.exists(marqdir):
+            os.makedirs(marqdir)
+    except Exception as e:
+        logging.error ('###### CANNOT CREATE DIR '+marqdir)
+    testimg = zipname[zipname.rindex('/'):zipname.rindex('.')]+'.png'
+    if os.path.isfile(testimg):
+        logging.debug ('###### FILE ALREADY EXISTS ')
+        return ''
+    img = getImage(medialist,'99','screenmarqueesmall')
+    if img == '':
+        logging.debug ('###### THERE ARE NO MARQUEES AVAILABLE FOR THIS FILE')
+        return ''
+    else:
+        fname = zipname[zipname.rindex('/'):zipname.rindex('.')]+'.'+img[img.rindex('.')+1:]
+        destfile = marqdir+fname
+        logging.debug('###### ADDING MARQUEE FOR '+str(zipname))
+        logging.debug ('###### GOING TO SAVE WITH NAME '+fname)
+        logging.debug ('###### DESTINATION FOR MARQUEE IS '+destfile)
+        shutil.move(img,destfile)
+    return ''
+
 def processBezels(medialist,destfile,path,hash,zipname):
+    if nobezel:
+        return ''
     logging.debug ('###### PROCESS BEZEL FOR '+zipname)
     logging.debug ('###### DOWNLOADING BEZELS '+str(medialist))
     bezeldir = path.replace('roms','overlays')
     if not os.path.exists(bezeldir):
         os.makedirs(bezeldir)
+    testimg = bezeldir+'/bezel-'+str(hash)+'.png'
+    if os.path.isfile(testimg):
+        logging.debug ('###### FILE ALREADY EXISTS ')
+        return ''
     img = getImage(medialist,'99','bezel-16-9')
-    if img == '':
-        logging.debug ('###### THERE ARE NO BEZELS AVAILABLE FOR THIS FILE')
+    if img == '' :
+        logging.debug ('###### THERE ARE NO BEZELS AVAILABLE FOR THIS FILE OR ALREADY DOWNLOADED')
         return ''
     else:
         destfile = bezeldir+'/bezel-'+str(hash)+img[img.rindex('.')-1:]
@@ -1227,19 +1283,20 @@ def getVideo(medialist, path, file, hash):
 
 def getMedia(medialist, path, file, hash,zipname):
     logging.debug ('###### STARTING MEDIA DOWNLOAD PROCESS')
-    #logging.debug ('###### THIS IS THE MEDIALIST ' + str(medialist))
+    ###logging.debug ('###### THIS IS THE MEDIALIST ' + str(medialist))
     destfile = ''
     if medialist != '' and len(medialist)>0:
         logging.debug('##### GRABBING FOR ' + file)
         destfile = path+'/images/'+hash+'-image.png'
         if os.path.isfile(destfile):
             logging.debug ('###### MEDIA FILE ALREADY EXISTS')
-            return destfile
         else:
             logging.debug ('###### GOING TO DOWNLOAD MEDIA')
             doMediaDownload(medialist,destfile,path,hash)
         logging.debug ('###### GOING TO DOWNLOAD BEZELS')
         processBezels(medialist,destfile,path,hash,zipname)
+        logging.debug ('###### GOING TO DOWNLOAD MARQUEES')
+        processMarquees(medialist,destfile,path,hash,zipname)
     return destfile
 
 def getAllSystems(CURRSSID):
@@ -1835,6 +1892,9 @@ def grabData(system, path, CURRSSID, acceptedExtens,gamesList):
     logging.info ('###### CLEANING BEZELS')
     destpath = path.replace('roms','overlays')
     cleanMedia (destpath,'*.png')
+    logging.info ('###### CLEANING MARQUEES')
+    destpath = path.replace('roms','PieMarquee2/marquee')
+    cleanMedia (destpath,'*.png')
     logging.debug ('###### DONE SYSTEM')
     return gamesList
 
@@ -2266,7 +2326,7 @@ def writeToMissingFile(notHaveList,listMissingFile,system):
     logging.debug ('###### GOING TO WRITE MISSING FILE ['+listMissingFile+']')
     f = open(listMissingFile,'a+')
     try:
-        f.write('SYSTEM : '+system)
+        f.write('SYSTEM : '+system+'\r\n')
     except Exception as e:
         logging.error ('###### SYSTEM IS INVALID '+str(e))
     for id in notHaveList:
@@ -2280,7 +2340,7 @@ def writeToMissingFile(notHaveList,listMissingFile,system):
         vals = (id,id)
         result = queryDB(query,vals,False,mydb)
         try:
-            f.write('\r\n\r\n----------------------------------------------------------------------------------------\r\n')
+            f.write('----------------------------------------------------------------------------------------\r\n')
             f.write(result[0])
             f.write('----------------------------------------------------------------------------------------\r\n')
         except Exception as e:

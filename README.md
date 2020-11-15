@@ -11,7 +11,7 @@ The script will not ouput anything to the console (except if there is an unhandl
 
 Look at the imports in the script and make sure you install all needed modules in your environment
 
-Also, some image/video libraries are needed, cannot remember which right now, will try to update them when I remember.
+Also, some image/video libraries are needed, install with 'sudo apt install libmediainfo-dev'
 
 If you have any questions, you can always contact me in twitter:[8bitzaya](https://twitter.com/8bitzaya) or I suppose GitHub too. Enjoy!
 

@@ -64,6 +64,8 @@ try:
 except Exception as e:
     logging.debug('###### ERROR CREATING LOG '+str(e))
 
+global sysconfig 
+
 try:
     sysconfig = argsvals['config'][0]
 except:
@@ -2237,6 +2239,7 @@ def copyRoms (systemid,systemname,path,CURRSSID,extensions,outdir):
     logging.error ('###### STARTING SYSTEM '+str(systemname))
     for file in filelist:
         logging.info ('-+-+-+-+-+-+ STARTING COPYING '+str(file)+' -+-+-+-+-+-+ ')
+        '''
         commcount = commcount +1
         if commcount == 50:
             try:
@@ -2244,12 +2247,14 @@ def copyRoms (systemid,systemname,path,CURRSSID,extensions,outdir):
             except Exception as e:
                 logging.error('###### COULD NOT COMMIT '+str(e))
             commcount = 0
+        '''
         newsys = dict()
         origfile = path+file
         logging.debug ('####### GOING TO PROCESS SORT FOR FILE '+origfile)
         romSys = getSystemForRom(origfile,systemid)
         logging.debug ('###### SYSTEM FOR ROM IS '+str(romSys))
         if romSys:
+            '''
             origsystem = path[path[:-1].rindex('/')+1:-1]
             ### DESTINATION FILES
             videoofile = 'videos/'+sha1(origfile).lower()+'-video.mp4'
@@ -2257,6 +2262,7 @@ def copyRoms (systemid,systemname,path,CURRSSID,extensions,outdir):
             videofile = 'videos/'+sha1(origfile)+'-video.mp4'
             imagefile = 'images/'+sha1(origfile)+'-image.png'
             bezelfile = file + '.cfg'
+            '''
             newsys['name']=romSys.lower().replace(' ','').replace('.','')
             newsys['fullname']=romSys
             newsys['path']=outdir + newsys['name'].replace('/','-')
@@ -2268,7 +2274,9 @@ def copyRoms (systemid,systemname,path,CURRSSID,extensions,outdir):
             newsys['theme']=newsys['name']
             newsys['ssname']=newsys['name']
             if newsys not in foundSys:
+                logging.info ('###### ADDING SYSTEM '+str(newsys))
                 foundSys.append(newsys)
+            '''
             destfile = newsys['path']+'/'+file
             logging.debug ('###### GOING TO COPY ROM '+origfile+' TO '+destfile)
             destpath = destfile[:destfile.rindex('/')]
@@ -2310,6 +2318,7 @@ def copyRoms (systemid,systemname,path,CURRSSID,extensions,outdir):
             thisdfile = destpath+bezelfile
             logging.debug ('###### GOING TO COPY BEZEL ')
             myFileCopy(thisfile,thisdfile)
+            '''
         else:
             logging.error ('###### FAILED TO COPY ROM '+origfile+' TO DESTINATION')
         logging.info ('-+-+-+-+-+-+ FINISHED COPYING '+str(file)+' -+-+-+-+-+-+ ')
@@ -3306,9 +3315,13 @@ def createEsConfig(systems,dir):
         sysxml=sysxml+'\t<system>\n'
         for key in essystem.keys():
             logging.debug ('###### ADDING KEY '+str(key)+' WITH VALUE '+str(essystem[key]))
-            sysxml=sysxml+'\t\t<'+key+'>'+essystem[key]+'</'+key+'>\n'
+            try:
+                sysxml=sysxml+'\t\t<'+str(key)+'>'+str(essystem[key])+'</'+str(key)+'>\n'
+            except:
+                logging.error ('###### COULD NOT GET VALUE FOR KEY '+str(key))
+                sysxml=sysxml+'\t\t<'+str(key)+'></'+str(key)+'>\n'
         sysxml=sysxml+'\t</system>\n'
-    sysxml = sysxml+'<systemList>'
+    sysxml = sysxml+'</systemList>'
     f = open(dir+"es_systems.cfg", "w")
     f.write(sysxml)
     f.close() 
@@ -3465,7 +3478,3 @@ if migrateDB:
     sys.exit(0)
 ## Default behaviour
 scrapeRoms(CURRSSID,listMissingFile)
-sys.exit(0)
-
-
-

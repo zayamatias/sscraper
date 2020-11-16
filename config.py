@@ -30,3 +30,5 @@ UNKDIR = '/home/pi/RetroPie/UNKNOWN'
 sysconfig = "/etc/emulationstation/es_systems.cfg"
 #### TEMPORARY DIRECTORY
 tmpdir = '/home/pi/'
+##### WHDLOAD XML FILE (TO FIX AMIGA GAME NAMES)
+whdxml = '/opt/retropie/emulators/amiberry/whdboot/game-data/whdload_db.xml'

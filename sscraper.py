@@ -47,6 +47,7 @@ parser.add_argument('--log', help='logfile output, by default sv2log.txt',nargs=
 parser.add_argument('--listmissing', help='creates a list of missing games per system on the file of your choice',nargs=1)
 parser.add_argument('--nobezel', help='Skips bezel downloads',action='store_true')
 parser.add_argument('--nomarquee', help='Skips marquee downloads',action='store_true')
+parser.add_argument('--fixwhd', help='Fix WHD XML files and updates filenames',action='store_true')
 
 argsvals = vars(parser.parse_args())
 
@@ -93,6 +94,11 @@ try:
 except:
     nomarquee = False
 
+try:
+    whdfix = argsvals['fixwhd']
+    whdfix = True
+except:
+    whdfix = False
 
 localdb = argsvals['localdb']
 update = argsvals['update']
@@ -868,23 +874,13 @@ def getDate(json):
 
 def writeXML(rootElement, filename):
     ### THIS FUNCTION WRITES AN XML FILE
-     logging.debug ('###### XML WRITING')
-     try:
-         xmlstr = minidom.parseString(ET.tostring(rootElement.getroot())).toprettyxml(indent="   ")
-         logging.debug('XML:' + xmlstr)
-     except Exception as e:
-         logging.error('cannot make pretty XML ' + str(e))
-         return 1
-     try:
-         logging.debug('##### SAVING XML '+filename)
-         with open(filename, "w") as f:
-             f.write(xmlstr)
-         f.close()
-         logging.debug('##### SAVED XML '+filename)
-     except Exception as e:
-         logging.error('###### CANNOT WRITE XML ' + filename + ' ' + str(e))
-         return 1
-     return 0
+    logging.debug ('###### XML WRITING')
+    try:
+        tree.write(open(filename, 'w'))
+    except Exception as e:
+        logging.error('cannot make pretty XML ' + str(e))
+        return 1
+    return 0
 
 
 def zipExtension(file):
@@ -3474,6 +3470,29 @@ if migrateDB:
     ## Now all games have been imported into local DB
     mydb.commit()
     ### TODO REMOVE
+    logging.info ('###### ALL DONE ######')
+    sys.exit(0)
+
+if whdfix:
+    with open(config.whdxml, 'r') as xml_file:
+        tree = ET.ElementTree()
+        tree.parse(xml_file)
+    root = tree.getroot()
+    logging.info ('###### NUMBER OF NODES '+str(len(root)))
+    for child in root:
+        logging.info('##### TRYING '+child.attrib['filename']+' WITH SHA '+child.attrib['sha1'])
+        srchsha = str(child.attrib['sha1'])
+        sql = 'SELECT file FROM filehashes where sha1=%s'
+        vals = (srchsha.upper())
+        result,success = queryDB(sql,vals,False,mydb)
+        logging.debug('###### FOUND '+str(result))
+        if result != None:
+            if isinstance(result,tuple):
+                result = result[0][0]    
+            logging.debug ('+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-'+str(type(result)))
+            child.attrib['filename'] = result[result.rindex('/')+1:result.rindex('.')]
+            logging.debug ('###### CHANGED FILENAME TO '+child.attrib['filename'])
+    writeXML(root,config.whdxml+'.new')
     logging.info ('###### ALL DONE ######')
     sys.exit(0)
 ## Default behaviour

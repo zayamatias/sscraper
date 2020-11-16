@@ -121,3 +121,7 @@ Rom Name : Hirata Shougo Interactive Ehon - Cinderella (Japan) (En,Ja,Fr).cue
 
 If you're using Amiberry to load whd files, this might come in handy. It will search the xml config file you specify in the config, and match the SHA1 with the ones in your database, and rename the file in the XML so it will load properly. For this option to run properly, you would have to already have scanned your game collection of Amiga games.
 Simply launch it with the --fixwhd switch.
+
+## Get new medias
+
+Since we're storing a local DB, is it wise from time to time to check for latest media additions. The --getnewmedia switch will scan from this page (https://screenscraper.fr/updatemedias.php) the new medias added and get the game information. As parameter pass the last page you want to have scanned (as a number)

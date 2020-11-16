@@ -41,6 +41,7 @@ parser.add_argument('--rename', help='Rename files to match the actual game name
 parser.add_argument('--importgames', help='Start importing DB at gameid',nargs=2)
 parser.add_argument('--localdb', help='Use only local DB for scraping (except media)', action='store_true')
 parser.add_argument('--getroms', help='Get new roms starting from ID and ending in ID', nargs=2)
+parser.add_argument('--getnewmedia', help='Get new media, give end page number as parameter', nargs=1)
 parser.add_argument('--sort', help='Sorts all your roms and stores them by system in a new directroy structure',nargs=1)
 parser.add_argument('--config', help='emulation station configuration file to read',nargs=1)
 parser.add_argument('--log', help='logfile output, by default sv2log.txt',nargs=1)
@@ -114,6 +115,15 @@ try:
         endid = 0
 except:
     migrateDB = False
+
+
+try:
+    pageid = argsvals['getnewmedia'][0]
+    newmedia = True
+except:
+    newmedia = False
+
+
 
 try:
     startid = argsvals['getroms'][0]
@@ -2272,7 +2282,6 @@ def copyRoms (systemid,systemname,path,CURRSSID,extensions,outdir):
             if newsys not in foundSys:
                 logging.info ('###### ADDING SYSTEM '+str(newsys))
                 foundSys.append(newsys)
-            '''
             destfile = newsys['path']+'/'+file
             logging.debug ('###### GOING TO COPY ROM '+origfile+' TO '+destfile)
             destpath = destfile[:destfile.rindex('/')]
@@ -2314,7 +2323,6 @@ def copyRoms (systemid,systemname,path,CURRSSID,extensions,outdir):
             thisdfile = destpath+bezelfile
             logging.debug ('###### GOING TO COPY BEZEL ')
             myFileCopy(thisfile,thisdfile)
-            '''
         else:
             logging.error ('###### FAILED TO COPY ROM '+origfile+' TO DESTINATION')
         logging.info ('-+-+-+-+-+-+ FINISHED COPYING '+str(file)+' -+-+-+-+-+-+ ')
@@ -3349,6 +3357,26 @@ def getGameFromAPI(gameid,ssid,doupdate):
             response =''    
     return response
 
+def locateGamesInPage(pagehtml,ssid):
+    try:
+        gidsrch = re.finditer('gameinfos\.php\?plateforme=\d*&gameid=(\d*)',pagehtml)
+        if gidsrch != None:
+            logging.info('###### MATCHES '+str(gidsrch))
+            procgames = []
+            for gid in gidsrch:
+                gameid = gid.group(1)
+                logging.debug('###### GAME ID IS '+str(gameid))
+                logging.info('###### GETTING GAME '+str(gameid)+' INFORMATION VIA API')
+                if gameid not in procgames:
+                    getGameFromAPI(gameid,ssid,True)
+                    procgames.append(gameid)
+        else:
+            logging.error ('###### DID NOT FIND ANY MEDIA UPDATES IN PAGE ....')
+    except Exception as e:
+        logging.error ('###### CANNOT GET PAGE INFO '+str(e))
+    return
+
+
 def locateRomInfo(pagehtml,ssid):
     try:
         gidsrch = re.search('gameinfos\.php\?plateforme=\d*&gameid=(\d*)',pagehtml)
@@ -3383,8 +3411,34 @@ def getRomPage(romid,ssid):
     locateRomInfo(req.text,ssid)
     return
 
+def getMediasPage(pagenum,ssid):
+    URL = 'https://screenscraper.fr/updatemedias.php?numpage='+str(pagenum)
+    success = False
+    retries = 10
+    while not success and retries > 1:
+        try:
+            req = requests.get(URL)
+            success = True
+        except requests.exceptions.Timeout:
+            logging.error ('###### REQUEST TIMED OUT')
+            retries = retries - 1 
+        except requests.exceptions.TooManyRedirects:
+            logging.error ('###### URL SEEMS TO BE WRONG '+URL)
+        except requests.exceptions.RequestException as e:
+            logging.error ('###### UNHANDLED ERROR '+str(e))
+            retries = retries -1
+    logging.debug ('###### GOT BACK: '+req.text)
+    locateGamesInPage(req.text,ssid)
+    return
+
 def getNewRoms(id,ssid):
     getRomPage(id,ssid)
+    return
+
+def getNewMedias(id,ssid):
+    for pageid in range (0,int(id)):
+        logging.info ('###### GETTING PAGE '+str(pageid))
+        getMediasPage(pageid,ssid)
     return
 
 
@@ -3414,7 +3468,11 @@ if getROMS:
             currssid = 0
     logging.info ('###### DONE GETTING ALL NEW ROMS IN RANGE ')
     sys.exit()
-    
+
+if newmedia:
+    currssid = 0
+    getNewMedias(pageid,currssid)
+    sys.exit()
 
 if migrateDB:
     ###populate systems

@@ -61,7 +61,7 @@ except:
 try:
     logging.basicConfig(filename=logfile, filemode='a',
                         format='%(asctime)s - %(process)d - %(name)s - %(levelname)s - %(message)s',
-                        level=logging.INFO)
+                        level=logging.DEBUG)
     logging.debug("###### LOGGING SERVICE STARTED")
 except Exception as e:
     logging.debug('###### ERROR CREATING LOG '+str(e))
@@ -73,38 +73,50 @@ try:
 except:
     sysconfig = config.sysconfig
 
+logging.info ('###### CONFIGURATION FILE '+sysconfig)
 
 try:
     sortroms = argsvals['sort'][0]
 except:
     sortroms = ''
 
+logging.info ('###### SORT ROMS '+str(sortroms))
+
+
 global nobezel
 
 try:
     nobezel = argsvals['nobezel']
-    nobezel = True
 except:
     nobezel = False
+
+logging.info ('###### NO BEZELS '+str(nobezel))
 
 global nomarquee
 
 try:
     nomarquee = argsvals['nomarquee']
-    nomarquee = True
 except:
     nomarquee = False
 
+logging.info ('###### NO MARQUEES '+str(nomarquee))
+
+
 try:
     whdfix = argsvals['fixwhd']
-    whdfix = True
 except:
     whdfix = False
 
+logging.info ('###### FIX WHDLOAD FILE '+str(whdfix))
+
 localdb = argsvals['localdb']
+logging.info ('###### LOCAL DB '+str(localdb))
 update = argsvals['update']
+logging.info ('###### UPDATE '+str(update))
 dbRename = argsvals['rename']
+logging.info ('###### RENAME FILES '+str(dbRename))
 cleanSystem = argsvals['clean']
+logging.info ('###### CLEAN SYSTEM '+str(cleanSystem))
 
 try:
     startid= argsvals['importgames'][0]
@@ -116,6 +128,8 @@ try:
 except:
     migrateDB = False
 
+logging.info ('###### IMPORT GAMES '+str(migrateDB))
+
 
 try:
     pageid = argsvals['getnewmedia'][0]
@@ -123,6 +137,7 @@ try:
 except:
     newmedia = False
 
+logging.info ('###### GET NEW MEDIA '+str(newmedia))
 
 
 try:
@@ -132,6 +147,9 @@ try:
 except:
     getROMS = False
 
+logging.info ('###### GET ROMS '+str(getROMS))
+
+
 try:
     listMissingFile = argsvals['listmissing'][0]
     if os.path.isfile(listMissingFile):
@@ -140,6 +158,8 @@ try:
 except Exception as e:
     listMissing = False
     listMissingFile = ''
+
+logging.info ('###### LIST MISSING '+str(listMissing)+' TO FILE '+str(listMissingFile))
 
 
 UPDATEDATA = update
@@ -2349,6 +2369,7 @@ def writeToMissingFile(notHaveList,listMissingFile,system):
     logging.debug ('###### GOING TO WRITE MISSING FILE ['+listMissingFile+']')
     f = open(listMissingFile,'a+')
     try:
+        logging.info ('###### WRITING SYSTEM '+str(system))
         f.write('SYSTEM : '+system+'\r\n')
     except Exception as e:
         logging.error ('###### SYSTEM IS INVALID '+str(e))
@@ -2493,6 +2514,7 @@ def scrapeRoms(CURRSSID,listMissingFile,sortRoms=False,outdir=''):
                         notHaveList = grabData(systemid, path, CURRSSID,extensions,sysGameList)
                         logging.debug('###### FILE FOR LIST OF MISSING GAMES IS ['+listMissingFile+']')
                         if listMissingFile!='':
+                            logging.info ('###### GOING TO WRITE MISSING FILE')
                             writeToMissingFile(notHaveList,listMissingFile,sysname)
                         logging.debug ('###### DO NOT HAVE LIST IS '+str(notHaveList))
                     ### WE GO TO NEXT USER INFO
@@ -3376,7 +3398,6 @@ def locateGamesInPage(pagehtml,ssid):
         logging.error ('###### CANNOT GET PAGE INFO '+str(e))
     return
 
-
 def locateRomInfo(pagehtml,ssid):
     try:
         gidsrch = re.search('gameinfos\.php\?plateforme=\d*&gameid=(\d*)',pagehtml)
@@ -3472,6 +3493,7 @@ if getROMS:
 if newmedia:
     currssid = 0
     getNewMedias(pageid,currssid)
+    logging.info ('###### DONE GETTING ALL NEW MEDIA IN RANGE ')
     sys.exit()
 
 if migrateDB:

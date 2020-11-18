@@ -49,6 +49,7 @@ parser.add_argument('--listmissing', help='creates a list of missing games per s
 parser.add_argument('--nobezel', help='Skips bezel downloads',action='store_true')
 parser.add_argument('--nomarquee', help='Skips marquee downloads',action='store_true')
 parser.add_argument('--fixwhd', help='Fix WHD XML files and updates filenames',action='store_true')
+parser.add_argument('--debug', help='Set log to DEBUG mode',action='store_true')
 
 argsvals = vars(parser.parse_args())
 
@@ -59,12 +60,24 @@ except:
     logfile = 'sv2log.txt'
 
 try:
+    loglevel = argsvals['debug']
+except:
+    loglevel = False
+
+if loglevel:
+    logtype = logging.DEBUG
+else:
+    logtype = logging.INFO
+
+try:
     logging.basicConfig(filename=logfile, filemode='a',
                         format='%(asctime)s - %(process)d - %(name)s - %(levelname)s - %(message)s',
-                        level=logging.DEBUG)
+                        level=logtype)
     logging.debug("###### LOGGING SERVICE STARTED")
 except Exception as e:
     logging.debug('###### ERROR CREATING LOG '+str(e))
+
+logging.info ('###### LOGGING LEVEL SET TO '+str(logtype))
 
 global sysconfig 
 

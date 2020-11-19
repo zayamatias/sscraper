@@ -2293,7 +2293,6 @@ def copyRoms (systemid,systemname,path,CURRSSID,extensions,outdir):
         romSys = getSystemForRom(origfile,systemid)
         logging.debug ('###### SYSTEM FOR ROM IS '+str(romSys))
         if romSys:
-            '''
             origsystem = path[path[:-1].rindex('/')+1:-1]
             ### DESTINATION FILES
             videoofile = 'videos/'+sha1(origfile).lower()+'-video.mp4'
@@ -2301,7 +2300,6 @@ def copyRoms (systemid,systemname,path,CURRSSID,extensions,outdir):
             videofile = 'videos/'+sha1(origfile)+'-video.mp4'
             imagefile = 'images/'+sha1(origfile)+'-image.png'
             bezelfile = file + '.cfg'
-            '''
             newsys['name']=romSys.lower().replace(' ','').replace('.','')
             newsys['fullname']=romSys
             newsys['path']=outdir + newsys['name'].replace('/','-')

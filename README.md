@@ -15,6 +15,8 @@ Also, some image/video libraries are needed, install with `sudo apt install libm
 
 If you have any questions, you can always contact me in twitter:[8bitzaya](https://twitter.com/8bitzaya) or I suppose GitHub too. Enjoy!
 
+**Dynamic marquees!!** Try together with https://github.com/zayamatias/EmulationStation
+
 **The script will run on a single thread, so it will not be super fast, parsing 70000 roms with an empty local DB may take up to 3 days or more depending on circumstances**
 
 Also, if you do a scrape of the 200k games that are in SS and store them in the localDB, you would need SS only to download media (May add that media caching feature in the future, but you'll probably need a huge disk capacit and a lot of patience!)

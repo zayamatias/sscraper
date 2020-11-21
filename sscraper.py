@@ -259,6 +259,11 @@ class Game:
                               jsondata['abspath'],
                               jsondata['localpath'],
                               jsondata['localhash'])
+        self.marquee = getMarquee(jsondata['jeu']['medias'],
+                              jsondata['abspath'],
+                              jsondata['localpath'],
+                              jsondata['localhash'],
+                              zippedFile)
         self.thumbnail = ''
         logging.debug ('###### GOING TO GET RATING')
         self.rating = getRating(jsondata)
@@ -1241,14 +1246,7 @@ def processMarquees(medialist,destfile,path,hash,zipname):
     if nomarquee:
         return ''
     logging.debug ('###### PROCESS MARQUEE FOR '+zipname)
-    marqdir = path.replace('roms','PieMarquee2/marquee')
-    try:
-        if not os.path.exists(marqdir):
-            os.makedirs(marqdir)
-    except Exception as e:
-        logging.error ('###### CANNOT CREATE DIR '+marqdir)
-    testimg = zipname[zipname.rindex('/'):zipname.rindex('.')]+'.png'
-    if os.path.isfile(testimg):
+    if os.path.isfile(destfile):
         logging.debug ('###### FILE ALREADY EXISTS ')
         return ''
     img = getImage(medialist,'99','screenmarqueesmall')
@@ -1256,10 +1254,6 @@ def processMarquees(medialist,destfile,path,hash,zipname):
         logging.debug ('###### THERE ARE NO MARQUEES AVAILABLE FOR THIS FILE')
         return ''
     else:
-        fname = zipname[zipname.rindex('/'):zipname.rindex('.')]+'.'+img[img.rindex('.')+1:]
-        destfile = marqdir+fname
-        logging.debug('###### ADDING MARQUEE FOR '+str(zipname))
-        logging.debug ('###### GOING TO SAVE WITH NAME '+fname)
         logging.debug ('###### DESTINATION FOR MARQUEE IS '+destfile)
         shutil.move(img,destfile)
     return ''
@@ -1347,8 +1341,23 @@ def getMedia(medialist, path, file, hash,zipname):
         logging.debug ('###### GOING TO DOWNLOAD BEZELS')
         processBezels(medialist,destfile,path,hash,zipname)
         logging.debug ('###### GOING TO DOWNLOAD MARQUEES')
-        processMarquees(medialist,destfile,path,hash,zipname)
     return destfile
+
+def getMarquee(medialist, path, file, hash,zipname):
+    logging.debug ('###### STARTING MARQUEE DOWNLOAD PROCESS')
+    ###logging.debug ('###### THIS IS THE MEDIALIST ' + str(medialist))
+    destfile = ''
+    if medialist != '' and len(medialist)>0:
+        logging.debug('##### GRABBING FOR ' + file)
+        destfile = path+'/marquees/'+hash+'-marquee.png'
+        if os.path.isfile(destfile):
+            logging.debug ('###### MARQUEE FILE ALREADY EXISTS')
+        else:
+            logging.debug ('###### GOING TO DOWNLOAD MARQUEE')
+            processMarquees(medialist,destfile,path,hash,zipname)
+    return destfile
+
+
 
 def getAllSystems(CURRSSID):
     ### CALLS API TO GET A LIST OF ALL THE SYSTEMS IN THE SITE
@@ -1944,8 +1953,7 @@ def grabData(system, path, CURRSSID, acceptedExtens,gamesList):
     destpath = path.replace('roms','overlays')
     cleanMedia (destpath,'*.png')
     logging.info ('###### CLEANING MARQUEES')
-    destpath = path.replace('roms','PieMarquee2/marquee')
-    cleanMedia (destpath,'*.png')
+    cleanMedia(path + '/marquees/','*.png')
     logging.debug ('###### DONE SYSTEM')
     return gamesList
 
@@ -2505,6 +2513,9 @@ def scrapeRoms(CURRSSID,listMissingFile,sortRoms=False,outdir=''):
                     ### CHECK IF THERE IS A VIDEOS DIRECTORY IF NOT WE CREATE IT
                     if not os.path.isdir(path+'/videos'):
                         os.mkdir(path + '/videos')
+                    ### CHECK IF THERE IS A MARQUEE DIRECTORY IF NOT WE CREATE IT
+                    if not os.path.isdir(path+'/marquees'):
+                        os.mkdir(path + '/marquees')
                     logging.info ('###### DOING SYSTEM ' + str(path)+ ' looking for extensions '+str(extensions))
                     ### SO WE START WITH THE SYSTEM PROCESSING
                     if sortRoms :

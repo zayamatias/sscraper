@@ -127,3 +127,7 @@ Simply launch it with the --fixwhd switch.
 ## Get new medias
 
 Since we're storing a local DB, is it wise from time to time to check for latest media additions. The --getnewmedia switch will scan from this page (https://screenscraper.fr/updatemedias.php) the new medias added and get the game information. As parameter pass the last page you want to have scanned (as a number)
+
+## Get new info
+
+Work exactly as the get new media option, it will just check for the pages where new information added to the games is displayed.

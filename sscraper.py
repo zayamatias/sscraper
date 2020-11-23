@@ -42,6 +42,7 @@ parser.add_argument('--importgames', help='Start importing DB at gameid',nargs=2
 parser.add_argument('--localdb', help='Use only local DB for scraping (except media)', action='store_true')
 parser.add_argument('--getroms', help='Get new roms starting from ID and ending in ID', nargs=2)
 parser.add_argument('--getnewmedia', help='Get new media, give end page number as parameter', nargs=1)
+parser.add_argument('--getnewinfo', help='Get new game infos, give end page number as parameter', nargs=1)
 parser.add_argument('--sort', help='Sorts all your roms and stores them by system in a new directroy structure',nargs=1)
 parser.add_argument('--config', help='emulation station configuration file to read',nargs=1)
 parser.add_argument('--log', help='logfile output, by default sv2log.txt',nargs=1)
@@ -151,6 +152,14 @@ except:
     newmedia = False
 
 logging.info ('###### GET NEW MEDIA '+str(newmedia))
+
+try:
+    pageid = argsvals['getnewinfo'][0]
+    newinfo = True
+except:
+    newinfo = False
+
+logging.info ('###### GET NEW INFO '+str(newmedia))
 
 
 try:
@@ -3474,6 +3483,26 @@ def getMediasPage(pagenum,ssid):
     locateGamesInPage(req.text,ssid)
     return
 
+def getInfosPage(pagenum,ssid):
+    URL = 'https://screenscraper.fr/update.php?numpage='+str(pagenum)
+    success = False
+    retries = 10
+    while not success and retries > 1:
+        try:
+            req = requests.get(URL)
+            success = True
+        except requests.exceptions.Timeout:
+            logging.error ('###### REQUEST TIMED OUT')
+            retries = retries - 1 
+        except requests.exceptions.TooManyRedirects:
+            logging.error ('###### URL SEEMS TO BE WRONG '+URL)
+        except requests.exceptions.RequestException as e:
+            logging.error ('###### UNHANDLED ERROR '+str(e))
+            retries = retries -1
+    logging.debug ('###### GOT BACK: '+req.text)
+    locateGamesInPage(req.text,ssid)
+    return
+
 def getNewRoms(id,ssid):
     getRomPage(id,ssid)
     return
@@ -3482,6 +3511,12 @@ def getNewMedias(id,ssid):
     for pageid in range (0,int(id)):
         logging.info ('###### GETTING PAGE '+str(pageid))
         getMediasPage(pageid,ssid)
+    return
+
+def getNewInfos(id,ssid):
+    for pageid in range (0,int(id)):
+        logging.info ('###### GETTING PAGE '+str(pageid))
+        getInfosPage(pageid,ssid)
     return
 
 
@@ -3515,6 +3550,12 @@ if getROMS:
 if newmedia:
     currssid = 0
     getNewMedias(pageid,currssid)
+    logging.info ('###### DONE GETTING ALL NEW MEDIA IN RANGE ')
+    sys.exit()
+
+if newinfo:
+    currssid = 0
+    getNewInfos(pageid,currssid)
     logging.info ('###### DONE GETTING ALL NEW MEDIA IN RANGE ')
     sys.exit()
 

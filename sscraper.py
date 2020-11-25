@@ -1170,7 +1170,7 @@ def validateVideo(videofile):
 
 def grabMedia(URL,destfile):
         logging.debug ('###### ACTUALLY GOING TO GRAB MEDIA '+destfile)
-        result = 1
+        result = -1
         retries = 0
         while (result !=0) and (retries <10):
             logging.debug ('###### WILL WGET MEDIA')
@@ -1178,6 +1178,7 @@ def grabMedia(URL,destfile):
                 result = subprocess.call(['wget','--retry-connrefused','--waitretry=1','--read-timeout=20','--timeout=15','-t','0','-c','-q', URL, '-O', destfile])
             except Exception as e:
                 logging.error('###### CANNOT WGET MEDIA '+str(e))
+                return ''
             if not validateImage(destfile):
                 if os.path.isfile(destfile):
                     logging.debug('###### COULD NOT VALIDATE '+destfile+' SO I REMOVE IT')
@@ -1189,6 +1190,7 @@ def grabMedia(URL,destfile):
         logging.debug ('###### RESULT OF DOWNLOAD '+str(result))
         if result == -1:
             logging.error ('##### FAILED DOWNLOAD - TRY MANUALLY wget ' + URL + ' -O ' + destfile)
+            return ''
         if result == 0:
             return destfile
         else:
@@ -1200,7 +1202,7 @@ def grabMedia(URL,destfile):
             return ''
 
 def getImage(medialist,num,imgtype):
-    logging.debug ('###### GOING TO GET SCREENSHOT '+str(medialist))
+    logging.debug ('###### GOING TO GET '+imgtype.upper()+' '+str(medialist))
     if not isinstance (medialist,list):
         logging.debug ('###### MEDIA LIST IS NOT A LIST')
         medialist = [medialist]
@@ -1257,15 +1259,18 @@ def processMarquees(medialist,destfile,path,hash,zipname):
     logging.debug ('###### PROCESS MARQUEE FOR '+zipname)
     if os.path.isfile(destfile):
         logging.debug ('###### FILE ALREADY EXISTS ')
-        return ''
-    img = getImage(medialist,'99','screenmarqueesmall')
+        return destfile
+    img = getImage(medialist,'99','marquee')
     if img == '':
-        logging.debug ('###### THERE ARE NO MARQUEES AVAILABLE FOR THIS FILE')
-        return ''
-    else:
-        logging.debug ('###### DESTINATION FOR MARQUEE IS '+destfile)
-        shutil.move(img,destfile)
-    return ''
+        img = getImage(medialist,'99','screenmarquee')
+        if img == '':
+            img = getImage(medialist,'99','screenmarqueesmall')
+            if img == '':
+                logging.debug ('###### THERE ARE NO MARQUEES AVAILABLE FOR THIS FILE')
+                return ''
+    logging.debug ('###### DESTINATION FOR MARQUEE IS '+destfile)
+    shutil.move(img,destfile)
+    return destfile
 
 def processBezels(medialist,destfile,path,hash,zipname):
     if nobezel:
@@ -1349,7 +1354,6 @@ def getMedia(medialist, path, file, hash,zipname):
             doMediaDownload(medialist,destfile,path,hash)
         logging.debug ('###### GOING TO DOWNLOAD BEZELS')
         processBezels(medialist,destfile,path,hash,zipname)
-        logging.debug ('###### GOING TO DOWNLOAD MARQUEES')
     return destfile
 
 def getMarquee(medialist, path, file, hash,zipname):
@@ -1363,7 +1367,7 @@ def getMarquee(medialist, path, file, hash,zipname):
             logging.debug ('###### MARQUEE FILE ALREADY EXISTS')
         else:
             logging.debug ('###### GOING TO DOWNLOAD MARQUEE')
-            processMarquees(medialist,destfile,path,hash,zipname)
+            destfile = processMarquees(medialist,destfile,path,hash,zipname)
     return destfile
 
 

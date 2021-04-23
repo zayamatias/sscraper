@@ -324,8 +324,11 @@ def queryDB(sql,values,directCommit,thisDB,logerror=False,retfull=False):
             if 'SELECT' in sql:
                 logging.debug('####### IS A SELECT QUERY')
                 try:
+                    logging.debug('####### GOING TO EXECUTE QUERY')
                     mycursor.execute(sql, values)
+                    logging.debug('####### EXECUTED QUERY - GOING TO RAB RESULTS')
                     myresult = mycursor.fetchall()
+                    logging.debug('####### GRABBED ALL RESULTS')
                     if logerror:
                         logging.error ('@@@@@@@@@@ '+str(mycursor._last_executed))
                     #logging.debug ('@@@@@@@@@@ '+str(mycursor._last_executed))
@@ -476,17 +479,22 @@ def updateInDBV2Call(api,params,response):
     logging.debug ('###### INSERTING IN DB')
     newresponse, success = queryDB(sql,val,True,mydb,False)
     logging.debug ('###### RETURNED FROM INSERTING IN DB')
+    jres = None
     if success:
         try:
             logging.debug ('###### WILL SEE IF IT IS PROPER JSON')
-            jres = ast.literal_eval(response)
+            jres = json.loads(response)
             logging.debug ('###### '+str(jres))
         except Exception as e:
             logging.error ('###### COULD NOT CONVERT ANSWER TO DICT IN UPDATE DBV2 CALL '+str(e))
             jres = response
+        logging.debug ('###### GOING TO VERIFY IF IT IS A DICT')
         if isinstance(jres,dict):
-            if response in jres.keys():
-                insertGameInLocalDb(jres['response']['jeu'])
+            logging.debug ('###### IT IS A DICTIONARY')
+            if 'response' in jres.keys():
+                logging.debug ('###### response IS IN JSON KEYS')
+                insertGameInLocalDb(jres['response']['jeu'],True)
+                return True
         else:
             logging.info ('###### THERE IS NO GAME IN THE RESPONSE ')
             return False
@@ -580,7 +588,7 @@ def doV2URLRequest(URL):
             logging.debug(response)
         except Exception as e:
             logging.error ('###### CANNOT CALL URL - FAILING '+str(e))
-        
+            response = 'ERROR'        
             ## TODO REMOVE
         if response[0]=='<':
             try:
@@ -635,16 +643,17 @@ def tryToFixResponse(newresponse):
     response = newresponse
     try:
         ### SEE IF IT IS A PROPER JSON OR NOT
-        logging.debug ('###### GOING TO CHECK IF IT IS A REAL JSON')
+        logging.debug ('###### GOING TO CHECK IF IT IS A REAL JSON '+str(type(newresponse)))
         response =  ast.literal_eval(newresponse)
     except Exception as e:
         if response !='NOT FOUND' and response!='QUOTA' and response!='FAILED':
             logging.debug ('###### THE RETURN JSON WHEN CALLED API IS NOT VALID '+str(e)+', WILL TRY TO FIX')
-            err = response.rfind ('],')
+            err = response.rfind (b'],')
             logging.debug('###### BAD RESPONSE AT '+str(err)+' OF LENGTH '+str(len(response)-15))
             if err > len(response)-15:
                 logging.debug ('###### HARD FIXING A SCREENSCRAPER BUG A STARY COMMA NEAR THE END AFTER A ]')
-                newresponse = response[:err] + "]" + response[err+2:]
+                newresponse = response[:err] + b"]" + response[err+2:]
+                logging.debug ('###### AFTER FIXED THE ERROR')
     return newresponse
 
 
@@ -1018,6 +1027,14 @@ def callAPI(URL, API, PARAMS, CURRSSID,Version='',tolog='',returnRaw=False,force
     if response == 'NOT FOUND':
         return response
     logging.debug ('###### CHECKING IF "{" IN RESPONSE')
+    logging.debug ('###### FIRST CHECK IF RESPONSE IS A STRING')
+    if not isinstance(response, str):
+        logging.debug ('###### RESPONSE IS NOT A STRING')
+        response = response.decode('utf-8')
+        logging.debug ('###### RESPONSE IS A STRING NOW')
+    else:
+        logging.debug ('###### IT ALREADY WAS A STRING')
+    logging.debug ('###### RERSPONSE FIND '+str(response.find('{')))
     if '{' in response:
         logging.debug ('###### YES THERE IS { IN RESPONSE')
         a = '{'+response.split('{', 1)[1]
@@ -1032,21 +1049,26 @@ def callAPI(URL, API, PARAMS, CURRSSID,Version='',tolog='',returnRaw=False,force
             if err > len(response)-15:
                 logging.debug ('###### HARD FIXING A SCREENSCRAPER BUG A STARY COMMA NEAR THE END AFTER A ]')
                 result = response[:err] + "]" + response[err+2:]
+                logging.debug ('###### AFTER FIX')
             if '#jsonrominfo' in result:
                 logging.debug ('###### HARD FIXING ANOTHER SCREENSCRAPER BUG, #JSONROMINFO NOT NEEDED')
                 result = result.replace('#jsonrominfo','')
                 logging.debug ('###### '+str(result))
+            logging.debug ('###### REPLACING WEIRD CHARACTERS')
             new_response = result.replace('\x0d\x0a','\\r\\n').replace('\x0a','').replace('\x09','').replace('\x0b','').replace('  ','').replace('\r','')
+            logging.debug ('###### REPLACED WEIRD CHARACTERS')
             try:
-                retJson = ast.literal_eval(new_response)
+                retJson = json.loads(new_response)
+                logging.debug ('###### CONVERTED TO JSON')
             except Exception as e:
                 try:
+                    logging.debug ('###### REPLACE CARRIAGE RETURN + NEWLINE')
                     new_response = new_response.replace('\\r\\n','')
-                    retJson = ast.literal_eval(new_response)
+                    retJson = json.loads(new_response)
                 except Exception as e:
                     logging.error ('####### EXITING NEED TO ANLYZE THIS ERROR' )
                     logging.error ('####### '+str(e))
-                    logging.error ('####### '+str(new_response))
+                    #logging.error ('####### '+str(new_response))
                     sys.exit()
     else:
         logging.error ('###### CHECK RESPONSE '+str(response))
@@ -1230,8 +1252,13 @@ def doMediaDownload(medialist,destfile,path,hash):
         logging.debug('###### GOING TO DOWNLOAD COMPOSITE SCREEN '+destfile)
         img1 = getImage(medialist,random.randint(0,10000),'mixrbv1')
         if img1 != '':  
-            logging.debug ('###### WE GOT A COMPOSITE')
-            shutil.move(img1,destfile)
+            logging.debug ('###### WE GOT A COMPOSITE - MOVING FILE '+img1+' TO '+destfile)
+            try:
+                shutil.move(img1,destfile)
+                logging.debug ('###### MOVE FILE COMMAND HAS BEEN EXECUTED')
+            except Exception as e:
+                logging.error ('###### ERROR MOVING FILE '+str(e))
+                logging.error ('###### THIS REALLY SHOULD NOT HAPPEN - VERIFY YOUR FILE SYSTEM, SPECIFICALLY SYMLINK PERMITS')
             return
         logging.debug ('###### NO COMPOSITE FOUND, CREATING ONE - DOWNLOADING SCREENSHOT')
         img1 = getImage(medialist,random.randint(0,10000),'ss')
@@ -1269,7 +1296,11 @@ def processMarquees(medialist,destfile,path,hash,zipname):
                 logging.debug ('###### THERE ARE NO MARQUEES AVAILABLE FOR THIS FILE')
                 return ''
     logging.debug ('###### DESTINATION FOR MARQUEE IS '+destfile)
-    shutil.move(img,destfile)
+    try:
+        shutil.move(img,destfile)
+    except Exception as e:
+        logging.error ('###### ERROR MOVING MARQUEE '+str(e))
+        logging.error ('###### PROBABLY THERE IS AN ISSUE WITH YOUR MOUNT PATH , MORE SPECIFICALLY SYMLINKS')
     return destfile
 
 def processBezels(medialist,destfile,path,hash,zipname):
@@ -1291,7 +1322,11 @@ def processBezels(medialist,destfile,path,hash,zipname):
     else:
         destfile = bezeldir+'/bezel-'+str(hash)+img[img.rindex('.')-1:]
         logging.debug ('###### DESTINATION FOR BEZEL IS '+destfile)
-        shutil.move(img,destfile)
+        try:
+            shutil.move(img,destfile)
+        except Exception as e:
+            logging.error ('###### ERROR MOVING BEZEL '+str(e))
+            logging.error ('###### PROBABLY THERE IS AN ISSUE WITH YOUR MOUNT PATH , MORE SPECIFICALLY SYMLINKS')
         zipname = zipname[zipname.rfind('/')+1:]
         logging.debug ('###### ZIPNAME IS '+zipname)
         bezelcfg = path+'/'+zipname+'.cfg'
@@ -2389,6 +2424,8 @@ def getAllGames(sysid):
     logging.debug (type(gameList[0]))
     try:
         retGameList=[]
+        if 'INT' in str(type(gameList[0])).upper():
+            logging.error ('###### I COULD NOT IDENTIFY THE SYSTEM, CHECK YOU es_systems.cfg FILE SO THE SSNAME TAG FOR THIS SYSTEM MATCHES THE SCREENSCRAPER CONFIG')
         for restup in gameList[0]:
             retGameList.append(int(restup[0]))
         logging.debug (str(retGameList))
@@ -3404,7 +3441,8 @@ def getGameFromAPI(gameid,ssid,doupdate):
     if doupdate:
         logging.debug ('###### GOING TO UPDATE GAME IN DB (APICACHE)')
         updateInDBV2Call('jeuInfos.php',shrtparams,response)    
-    if 'jeu' in response:
+    logging.debug ('###### CHECKING IF jeu IS IN RESPONSE')
+    if response.find('jeu'):
         logging.debug ('###### GOING TO UPDATE GAME IN DB (NORMALIZED)')
         response = callAPI(fixedURL,'jeuInfos',params,currssid,'2','UPDATE GAME INFO ') 
         success = insertGameInLocalDb(response['jeu'],True)
@@ -3412,7 +3450,9 @@ def getGameFromAPI(gameid,ssid,doupdate):
             logging.debug ('###### I COULD NOT INSERT GAME INTO DB BECAUSE IT DID NOT HAS ASSOCIATED ROMS')
             updateInDBV2Call('jeuInfos.php',shrtparams,'NOT FOUND')
             response =''    
+    logging.debug ("###### RETURNING RESPONSE")
     return response
+
 
 def locateGamesInPage(pagehtml,ssid):
     try:

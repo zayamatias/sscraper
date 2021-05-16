@@ -428,8 +428,10 @@ def getGameName(jsondata,path):
     if extras and not nonamemodifiers:
         extname = ' '
         logging.debug ('###### FOUND EXTRAS FOR NAME '+str(extras))
+        pos = 0
         for extra in extras:
-            extname=extname+extra[0]
+            extname=extname+extra[pos]
+            pos = pos + 1
         logging.debug ('###### NAME EXTENSION IS '+extname)
     name = None
     if 'noms' in jsondata['jeu']:

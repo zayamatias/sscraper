@@ -2440,7 +2440,6 @@ def getAllGames(sysid):
         retGameList=[]
         if isinstance(gameList[0],int):
             logging.error ('###### I COULD NOT IDENTIFY THE SYSTEM, CHECK YOUR es_systems.cfg FILE SO THE SSNAME TAG FOR THIS SYSTEM MATCHES THE SCREENSCRAPER CONFIG')
-            sys.exit()
         for restup in gameList[0]:
             retGameList.append(int(restup[0]))
         logging.debug (str(retGameList))

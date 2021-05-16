@@ -47,7 +47,7 @@ By default, running the script 'python sscraper.py' will:
 - It will store the SHA1, MD5 & CRC of files in the DB, so it will assing the original hashes to the compressed file
 - It will look inside compressed files in case there is no match in screenscraper (and check again with hashes for extracted file)
 - It will delete and rebuild a new gamelist.xml file, so any addition you have done to this fie manually will be deleted.
-- It will add the (disk x) or (disc X) or (side x) or (tape x) information found in the filename to the game name.
+- It will add the (disk x) or (disc X) or (side x) or (tape x) information found in the filename to the game name (now also the [...] (...) values in teh filename)
 - It will download video and images (will compose the background + 3dBox if both are found and there is no composite present in screenscraper) and verify their integrity
 - It will download bezels and create the configuration files (tested only for RetroPie) (disable with --nobezel)
 - It will download small marquee so it should work with https://github.com/losernator/PieMarquee2 (disable with --nomarquee)
@@ -131,3 +131,7 @@ Since we're storing a local DB, is it wise from time to time to check for latest
 ## Get new info
 
 Work exactly as the get new media option, it will just check for the pages where new information added to the games is displayed.
+
+## Do not add game tags to the game name
+
+By default the scraper will look into the filenames and add anything between () and between [] to the name displayed in retropie. Disable this function with the --nonamemodif flag.

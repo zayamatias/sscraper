@@ -51,6 +51,7 @@ parser.add_argument('--nobezel', help='Skips bezel downloads',action='store_true
 parser.add_argument('--nomarquee', help='Skips marquee downloads',action='store_true')
 parser.add_argument('--fixwhd', help='Fix WHD XML files and updates filenames',action='store_true')
 parser.add_argument('--debug', help='Set log to DEBUG mode',action='store_true')
+parser.add_argument('--nonamemodif', help='Do not add game name modifiers as found in filename (Version/disk/etc)',action='store_true')
 
 argsvals = vars(parser.parse_args())
 
@@ -59,6 +60,12 @@ try:
     logfile = argsvals['log'][0]
 except:
     logfile = 'sv2log.txt'
+
+try:
+    nonamemodifiers = argsvals['nonamemodif']
+except:
+    nonamemodifiers = False
+
 
 try:
     loglevel = argsvals['debug']
@@ -303,13 +310,16 @@ class Game:
             attrs = vars(self)
             logging.debug('###### GAME ATTRIBUTES '+str(attrs))
             for attr in attrs:
-                try:
-                    attrs[attr].decode('utf-8')
-                except:
-                    logging.error('###### NOT UTF-8')
-                    sys.exit()
-                subEl = ET.SubElement(gameNode, attr)
-                subEl.text = attrs[attr]
+                if isinstance(attrs[attr],dict):
+                    logging.debug ('####### ADDING NODE '+str(attr)+' WITH VALUE '+str(attrs[attr]))
+                    logging.debug ('####### ADDING NODE '+str(type(attr))+' WITH VALUE '+str(type(attrs[attr]['text'])))
+                    subEl = ET.SubElement(gameNode, attr)
+                    subEl.text = attrs[attr]['text']
+                else:
+                    logging.debug ('####### ADDING NODE '+str(attr)+' WITH VALUE '+str(attrs[attr]))
+                    logging.debug ('####### ADDING NODE '+str(type(attr))+' WITH VALUE '+str(type(attrs[attr])))
+                    subEl = ET.SubElement(gameNode, attr)
+                    subEl.text = attrs[attr]
             return gameNode
         else:
             return None
@@ -326,7 +336,7 @@ def queryDB(sql,values,directCommit,thisDB,logerror=False,retfull=False):
                 try:
                     logging.debug('####### GOING TO EXECUTE QUERY')
                     mycursor.execute(sql, values)
-                    logging.debug('####### EXECUTED QUERY - GOING TO RAB RESULTS')
+                    logging.debug('####### EXECUTED QUERY - GOING TO GRAB RESULTS')
                     myresult = mycursor.fetchall()
                     logging.debug('####### GRABBED ALL RESULTS')
                     if logerror:
@@ -412,44 +422,30 @@ def getArcadeSystems():
     return arcsys
 
 def getGameName(jsondata,path):
+    logging.debug('###### IN GAME NAME GAMEPATH '+str(path))
+    extras = re.findall(r'(\(.*\))|(\[.*\])',path)
+    extname =''
+    if extras and not nonamemodifiers:
+        extname = ' '
+        logging.debug ('###### FOUND EXTRAS FOR NAME '+str(extras))
+        for extra in extras:
+            extname=extname+extra[0]
+        logging.debug ('###### NAME EXTENSION IS '+extname)
+    name = None
     if 'noms' in jsondata['jeu']:
-        name = None
         names = []
-        if not isinstance(jsondata['jeu']['noms'],dict):
-            logging.debug ('###### NOT A DICT SO CONVERTING '+str(jsondata['jeu']['noms'][0]))
-            for a in jsondata['jeu']['noms']:
-                b = a.values()
-                names.append({'region':b[1],'text':b[0]})
-            logging.debug ('###### CONVERTED '+str(names))
+        logging.debug ('###### NAMES IS NOT A DICT SO CONVERTING '+str(jsondata['jeu']['noms'])+' TO '+str(jsondata['jeu']['noms'][0]))
+        if isinstance(jsondata['jeu']['noms'],list):
+            logging.debug ('###### IT IS A LIST SO I RETURN FIRST OBJECT IN IT')
+            jname =jsondata['jeu']['noms'][0]['text'] 
+            logging.debug ('###### NAME IN JSON IS '+str(jname)+' OF TYPE '+str(type(jname)))
+            return jname + extname
         else:
-            if 'region' not in str(jsondata['jeu']['noms']):
-                logging.debug ('###### SEEMS LIKE A V1 DICTIONARY')
-                for item in jsondata['jeu']['noms'].items():
-                    names.append({'region':item[0],'text':item[1]})
-            else:
-                names = jsondata['jeu']['noms'] 
-            logging.debug ('###### SEEMS TO BE A PROPER DICTIONARY')
-        logging.debug ('####### NAMES '+str(names))
-        for nom in names:
-            logging.debug ('###### LOOKING FOR NAMES '+str(nom)+' TYPE '+str(type(nom)))
-            if 'ss' in nom['region']:
-                logging.debug ('###### FOUND SCREEN SCRAPER NAME')
-                name = nom['text'].encode('utf-8')
-        if not name:
-            logging.debug ('###### DID NOT FOUND SCREEN SCRAPER NAME, ASSIGNING FIRST NAME')
-            name = jsondata['jeu']['nom'][0]['text']
-        mdisk = multiDisk(path)
-        mvers = multiVersion(path)
-        mctry = multiCountry(path)
-        if mctry:
-            name = name+' '+mctry.group(0)
-        if mdisk:
-            name = name+' '+mdisk.group(0)
-        if mvers:
-            name = name +' ('+mvers.group(0)+')'
+            logging.error ('###### TYPE IS '+str(type(jsondata['jeu']['noms'])))
+            sys.exit()
     else:
         logging.debug ('###### NOMS TAG NOT IN JSON '+str(jsondata['jeu']))
-        name = jsondata['jeu']['nom']
+        name = jsondata['jeu']['nom']+extname
     return name
 
 def updateInDBV2Call(api,params,response):
@@ -580,6 +576,7 @@ def doV2URLRequest(URL):
     response = ''
     timeout = True
     tries = 10
+    req = False
     while timeout and tries > 0:
         try:
             req = requests.get(URL)
@@ -596,9 +593,12 @@ def doV2URLRequest(URL):
             except Exception as e:
                 logging.error ('###### CANNOT TREAT RESPONSE '+str(e))
         try:
-            status = parsePossibleErrors(req.status_code)
-            if status != 'OK':
-                response = status
+            if req:
+                status = parsePossibleErrors(req.status_code)
+                if status != 'OK':
+                    response = status
+            else:
+                response = 'RETRY'
         except Exception as e:
             logging.error ('###### ERROR WHILE PARSING ERRORS '+str(e))
         if response != 'RETRY':
@@ -1094,9 +1094,9 @@ def callAPI(URL, API, PARAMS, CURRSSID,Version='',tolog='',returnRaw=False,force
                 VTWOQUOTA = False
         except Exception as e:
             if 'ssuser' in str(e):
-                logging.error ('###### ERROR IN GETTING INFORMATION FROM RESPONSE // PROBABLY ANON CALL [SSUSER MISSING] , NOTHING TO WORRY ABOUT '+str(e))
+                logging.info ('###### ERROR IN GETTING INFORMATION FROM RESPONSE // PROBABLY ANON CALL [SSUSER MISSING] , NOTHING TO WORRY ABOUT '+str(e))
             elif 'requests' in str(e):
-                logging.error ('###### ERROR IN GETTING QUOTA INFORMATION IN RESPONSE '+str(e))
+                logging.info ('###### ERROR IN GETTING QUOTA INFORMATION IN RESPONSE '+str(e))
             else:
                 logging.error ('###### ERROR IN GETTING RESPONSE '+str(e))
     if returnRaw:
@@ -1562,7 +1562,17 @@ def crc(fileName):
 
 def escapeFileName(file):
     ### JUST MACE SURE THAT WE HAVE A NORMALIZED FILENAME
-    return file.decode('utf8').encode('ascii','ignore')
+    logging.debug ('###### GOING TO DECODE FILE '+str(file))
+    if not isinstance(file, str):
+        try:
+            retname =  file.decode('utf8').encode('ascii','ignore')
+        except Exception as e:
+            logging.Error ('###### COULD NOT DECODE FILENAME '+str(e))
+            retname = file
+    else:
+        retname = file
+    logging.debug ('###### DECODE FILE '+str(file))
+    return retname
 
 
 def getNamesInZip(zFile):
@@ -1901,9 +1911,9 @@ def grabData(system, path, CURRSSID, acceptedExtens,gamesList):
     filelist = getRomFiles(path, acceptedExtens)
     ### ITERATE THROUGH EACH FILE
     for file in filelist:
-        ### CREATE A PORCESS FILE VARIABLE SO WE KEEP THE INITIAL FILE VARIABLE QUIET
+        ### CREATE A PROCESS FILE VARIABLE SO WE KEEP THE INITIAL FILE VARIABLE QUIET
         procfile = file
-        taillen = 30-len(procfile)/4
+        taillen = 30-int(len(procfile)/4)
         logging.info ('-+'*taillen+'- START FILE ['+procfile+'] '+'-+'*taillen+'-')
         ### INITIALIZE GAMEINFO, WE DO NOT WANT SOMETHING STRANGE HAPPENING
         gameinfo = None
@@ -1979,6 +1989,9 @@ def grabData(system, path, CURRSSID, acceptedExtens,gamesList):
         ### INFORM WE HAVE FINISHED PROCESSING FILE
         logging.info ('-+'*taillen+'- END FILE ['+procfile+'] '+'-+'*taillen+'-')
     ### WE HAVE PROCESSED ALL FILES, SO ADD GAMELIST TO THE ROOT ELEMENT OF THE XML
+    logging.debug ('###### TYPE '+str(type(gamelist))+' ---- '+str(gamelist))
+    for elmn in gamelist:
+        logging.debug (str(elmn))
     tree._setroot(gamelist)
     ### SET THE DESTINATION XML FILE
     xmlFile = path + '/gamelist.xml'
@@ -1987,7 +2000,9 @@ def grabData(system, path, CURRSSID, acceptedExtens,gamesList):
         logging.debug ('###### REMOVING GAMELIST')
         os.remove(xmlFile)
     ### AND THEN CREATE IT
+    logging.debug ('###### GOING TO CREATE NEW GAMELIST')
     result = tree.write(xmlFile,encoding='utf-8', xml_declaration=True)
+    logging.debug ('###### INTERNAL GAMELIST CREATED')
     if result != None:
         ### INFORM WE COULD NOT CREATE XML
         logging.error ('##### ERROR WHEN CREATING XML '+str(result))
@@ -2421,11 +2436,11 @@ def getAllGames(sysid):
     sql = 'SELECT DISTINCT ID FROM games where system = %s'
     vals = (sysid,)
     gameList = queryDB(sql,vals,False,mydb,False)
-    logging.debug (type(gameList[0]))
     try:
         retGameList=[]
-        if 'INT' in str(type(gameList[0])).upper():
-            logging.error ('###### I COULD NOT IDENTIFY THE SYSTEM, CHECK YOU es_systems.cfg FILE SO THE SSNAME TAG FOR THIS SYSTEM MATCHES THE SCREENSCRAPER CONFIG')
+        if isinstance(gameList[0],int):
+            logging.error ('###### I COULD NOT IDENTIFY THE SYSTEM, CHECK YOUR es_systems.cfg FILE SO THE SSNAME TAG FOR THIS SYSTEM MATCHES THE SCREENSCRAPER CONFIG')
+            sys.exit()
         for restup in gameList[0]:
             retGameList.append(int(restup[0]))
         logging.debug (str(retGameList))
@@ -3312,14 +3327,14 @@ def insertGameInLocalDb(gameInfo,doupdate):
     try:
         game['notgame'] = gameInfo['notgame']
     except Exception as e:
-        logging.error ('###### ATTRIBUTE NOTGAME NOT FOUND, CREATING DEFAULT FOR '+str(game['id']))
+        logging.info ('###### ATTRIBUTE NOTGAME NOT FOUND, CREATING DEFAULT FOR '+str(game['id']))
         game['notgame'] = False
     try:
         game['topstaff'] = gameInfo['topstaff']
         if game['topstaff'] == None:
             game['topstaff'] = 0
     except Exception as e:
-        logging.error ('###### ATTRIBUTE TOPSTAFF NOT FOUND, CREATING DEFAULT FOR '+str(game['id']))
+        logging.info ('###### ATTRIBUTE TOPSTAFF NOT FOUND, CREATING DEFAULT FOR '+str(game['id']))
         game['topstaff'] = 0
 
     try:
@@ -3327,20 +3342,20 @@ def insertGameInLocalDb(gameInfo,doupdate):
         if game['cloneof'] == None:
             game['cloneof'] = 0
     except Exception as e:
-        logging.error ('###### ATTRIBUTE CLONEOF NOT FOUND, CREATING DEFAULT FOR '+str(game['id']))
+        logging.info ('###### ATTRIBUTE CLONEOF NOT FOUND, CREATING DEFAULT FOR '+str(game['id']))
         game['cloneof'] = 0
 
     try:
         game['joueurs'] = gameInfo['joueurs']['text']
     except Exception as e:
-        logging.error ('###### ATTRIBUTE PLAYERS NOT FOUND, CREATING DEFAULT FOR '+str(game['id']))
+        logging.info ('###### ATTRIBUTE PLAYERS NOT FOUND, CREATING DEFAULT FOR '+str(game['id']))
         game['joueurs'] = 0
     try:
         game['rotation'] = gameInfo['rotation']
         if game['rotation'] == None:
             game['rotation'] = 0
     except Exception as e:
-        logging.error ('###### ATTRIBUTE ROTATION NOT FOUND, CREATING DEFAULT FOR '+str(game['id']))
+        logging.info ('###### ATTRIBUTE ROTATION NOT FOUND, CREATING DEFAULT FOR '+str(game['id']))
         game['rotation'] = 0
     try:
         game['system'] = gameInfo['systeme']['id']
@@ -3348,13 +3363,13 @@ def insertGameInLocalDb(gameInfo,doupdate):
         try:
             game['system'] = gameInfo['systemeid']
         except Exception as e:
-            logging.error ('###### ATTRIBUTE SYSTEMID NOT FOUND, CREATING DEFAULT FOR '+str(game['id']))
+            logging.info ('###### ATTRIBUTE SYSTEMID NOT FOUND, CREATING DEFAULT FOR '+str(game['id']))
             game['system'] = 0
     try:
         game['editeur'] = gameInfo['editeur']['id']
         #insertEditorInLocalDb(game['editeur'],gameInfo['editeur']['text'])
     except Exception as e:
-        logging.error ('###### ATTRIBUTE EDITOR NOT FOUND, CREATING DEFAULT FOR '+str(game['id']))
+        logging.info ('###### ATTRIBUTE EDITOR NOT FOUND, CREATING DEFAULT FOR '+str(game['id']))
         game['editeur'] = 0
     logging.debug ('###### GAME INFO IS '+str(game))
     insertGameDataInLocalDB(game,doupdate)
@@ -3362,29 +3377,29 @@ def insertGameInLocalDb(gameInfo,doupdate):
         logging.debug ('###### NAMES ARE '+str(gameInfo['noms']))
         insertGameNamesInDB(game['id'],gameInfo['noms'],doupdate)
     except Exception as e:
-        logging.error ('###### COULD NOT FIND NAMES FOR THE GAME')
+        logging.info ('###### COULD NOT FIND NAMES FOR THE GAME')
     try:
         synopsis = gameInfo['synopsis']
         insertSynopsisInDB(game['id'],synopsis,doupdate)
     except Exception as e:
-        logging.error ('###### COULD NOT FIND SYNOPSIS FOR THE GAME -'+str(e)+' - DEFAULTING')
+        logging.info ('###### COULD NOT FIND SYNOPSIS FOR THE GAME -'+str(e)+' - DEFAULTING')
         ###synopsis = [{'langue':'UNK','text':''}]
     try:
         logging.debug('###### INSERTING ROMS')
         insertGameRomsInDB(game['id'],  gameInfo['roms'],game['system'],doupdate)
     except Exception as e:
-        logging.error ('###### COULD NOT FIND ROMS FOR THE GAME - LEAVING EMPTY '+str(e))
+        logging.info ('###### COULD NOT FIND ROMS FOR THE GAME - LEAVING EMPTY '+str(e))
     try:
         medias = gameInfo['medias']
         insertGameMediasInDB(game['id'],medias,game['system'],doupdate)
     except Exception as e:
-        logging.error ('###### COULD NOT FIND MEDIAS FOR THE GAME -'+str(e)+' - DEFAULTING')
+        logging.info ('###### COULD NOT FIND MEDIAS FOR THE GAME -'+str(e)+' - DEFAULTING')
         ##medias = [{'type':'unk','url':'unk','region':'unk','format':'unk'}]
     try:
         dates = gameInfo['dates']
         insertGameDatesInDB(game['id'], dates,doupdate)
     except Exception as e:
-        logging.error ('###### COULD NOT FIND DATES FOR THE GAME -'+str(e)+' - DEFAULTING')
+        logging.info ('###### COULD NOT FIND DATES FOR THE GAME -'+str(e)+' - DEFAULTING')
         ##dates = [{'region':'unk','text':'0'}]
     return True
 
@@ -3445,7 +3460,12 @@ def getGameFromAPI(gameid,ssid,doupdate):
     if response.find('jeu'):
         logging.debug ('###### GOING TO UPDATE GAME IN DB (NORMALIZED)')
         response = callAPI(fixedURL,'jeuInfos',params,currssid,'2','UPDATE GAME INFO ') 
-        success = insertGameInLocalDb(response['jeu'],True)
+        if isinstance(response,dict):
+            success = insertGameInLocalDb(response['jeu'],True)
+        else:
+            logging.error ('###### COULD NOT GET A PROPER RESPONSE FOR GAME FROM API')
+            logging.debug ("###### RETURNING RESPONSE")
+            return response
         if not success:
             logging.debug ('###### I COULD NOT INSERT GAME INTO DB BECAUSE IT DID NOT HAS ASSOCIATED ROMS')
             updateInDBV2Call('jeuInfos.php',shrtparams,'NOT FOUND')

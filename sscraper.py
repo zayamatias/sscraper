@@ -242,7 +242,7 @@ UNKDIR = config.UNKDIR
 
 class Game:
     ### THIS IS THE GAME CLASS, IT WILL HOLD INFORMATION OF EACH SCRAPED GAME
-    def __init__(self, jsondata):
+    def __init__(self, jsondata,dozip):
         if 'localpath' not in jsondata.keys():
             logging.debug ('###### NO LOCALPATH DEFINED - CANNOT CREATE GAME')
             return None
@@ -251,7 +251,7 @@ class Game:
         except Exception as e:
             logging.error ('###### COULD NOT CREATE LOCALPATH FOR GAME '+str(e))
         ### CAN WE COMPRESS FILE?? THIS IS DONE IN ORDER TO SAVE SPACE
-        if file[file.rfind('.'):].lower() not in donotcompress:
+        if dozip and (file[file.rfind('.'):].lower() not in donotcompress):
             ### YES WE CAN ZIP FILE
             logging.debug('###### GOING TO ZIP FILE')
             zippedFile = convertToZip(file)
@@ -963,7 +963,7 @@ def convertToZip(file):
     zippedFile = zipExtension(file)
     if os.path.isfile(file):
         logging.debug ('###### ZIPPING '+file+' INTO '+zippedFile)
-        result = subprocess.call(['zip', zippedFile, file, '-9', '-D', '-q','-r'])
+        result = subprocess.call(['zip', zippedFile, file, '-9', '-D', '-q','-r','-j'])
         logging.debug('###### ZIPPED FILE ' + zippedFile+' WITH RESULT '+str(result))
         if result == 0:
             try:
@@ -1211,6 +1211,8 @@ def grabMedia(URL,destfile):
                 logging.debug ('###### DOWNLOAD IS CORRUPTED ON RETRY '+str(retries+1)+' URL '+str(URL))
                 result = -1
             retries = retries + 1
+            if retries == 3:
+                URL = re.sub(r'(\(.+\))','(wor)',URL)
         logging.debug ('###### RESULT OF DOWNLOAD '+str(result))
         if result == -1:
             logging.error ('##### FAILED DOWNLOAD - TRY MANUALLY wget ' + URL + ' -O ' + destfile)
@@ -1903,7 +1905,7 @@ def getRomFiles(path,acceptedExtens):
         filelist = []
     return filelist
 
-def grabData(system, path, CURRSSID, acceptedExtens,gamesList):
+def grabData(system, path, CURRSSID, acceptedExtens,gamesList,dozip):
     ### WE'RE ABOUT TO PROCESS A SYSTEM
     logging.debug ('###### GRAB DATA START')
     ### CREATE ROOT ELEMENT FOR GAMELIST
@@ -1956,7 +1958,7 @@ def grabData(system, path, CURRSSID, acceptedExtens,gamesList):
             try:
                 ### YES, CREATE A GAME INSTANCE THEN
                 thisGame = None
-                thisGame = Game(gameinfo)
+                thisGame = Game(gameinfo,dozip)
             except Exception as e:
                 logging.error ('###### COULD NOT CREATE GAME INSTANCE '+str(e))
             logging.debug ('###### REMOVING GAME FROM MISSING LIST')
@@ -2045,8 +2047,10 @@ def findMissingGame(gameName,systemid,path,isArcade):
         qName =gameName[0:1]+'%'
     if len(srchName)>2:
         qName =gameName[0:2]+'%'
+    '''
     if len(srchName)>3:
         qName =gameName[0:3]+'%'
+    '''
     logging.debug ('###### SEARCHING '+qName)
     sql = "SELECT gs.id as gameID, `system`, COALESCE (gn.`text`,'----') as gameName, COALESCE (gr.romfilename,'----') as romName FROM games gs\
            LEFT JOIN gameNames gn ON gn.gameid = gs.id\
@@ -2079,7 +2083,8 @@ def findMissingGame(gameName,systemid,path,isArcade):
                 logging.debug ('####### FOUND IT!! '+str(results))
     else:
         logging.debug ('####### COULD NOT FIND '+gameName+' FOR SYSTEM '+str(systemid))
-    if gameId == 0 and not isArcade:
+    # DO NOT PROCESS ZIPPED DOS GAMES
+    if gameId == 0 and not isArcade and systemid != '135':
         logging.debug ('###### WILL CHECK IF IT IS A COMPRESSED FILE')
         exten = gameName[gameName.rindex('.')+1:].upper()
         logging.debug ('###### EXTENSION IS '+exten)
@@ -2499,6 +2504,10 @@ def scrapeRoms(CURRSSID,listMissingFile,sortRoms=False,outdir=''):
         ### CHECK FOR SYSTEM TAG
         if child.tag == 'system':
             ### IF THE TAG HAS A SSKIP ATTRIBUTE THEN WE SKIP IT
+            if 'nozip' not in child.attrib:
+                zipfilesinsystem = True
+            else:
+                zipfilesinsystem = False
             if 'sskip' not in child.attrib:
                 ### GIVE A DEFAULT SYSTEM ID
                 systemid = '000'
@@ -2599,7 +2608,7 @@ def scrapeRoms(CURRSSID,listMissingFile,sortRoms=False,outdir=''):
                                 newSystems.append(fsys)      
                     else:
                         sysGameList = getAllGames(systemid)
-                        notHaveList = grabData(systemid, path, CURRSSID,extensions,sysGameList)
+                        notHaveList = grabData(systemid, path, CURRSSID,extensions,sysGameList,zipfilesinsystem)
                         logging.debug('###### FILE FOR LIST OF MISSING GAMES IS ['+listMissingFile+']')
                         if listMissingFile!='':
                             logging.info ('###### GOING TO WRITE MISSING FILE')

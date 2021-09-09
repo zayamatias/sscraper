@@ -2,13 +2,13 @@ CREATE DATABASE `romhashes` /*!40100 DEFAULT CHARACTER SET utf8mb4 */;
 
 USE `romhashes`
 
-CREATE TABLE 'filehashes' (
-  'file' varchar(300) NOT NULL,
-  'SHA1' varchar(100) DEFAULT NULL,
-  'MD5' varchar(100) DEFAULT NULL,
-  'CRC' varchar(100) DEFAULT NULL,
-  PRIMARY KEY ('file'),
-  KEY 'filehashes_file_IDX' ('file') USING BTREE
+CREATE TABLE `filehashes` (
+  `file` varchar(300) NOT NULL,
+  `SHA1` varchar(100) DEFAULT NULL,
+  `MD5` varchar(100) DEFAULT NULL,
+  `CRC` varchar(100) DEFAULT NULL,
+  PRIMARY KEY (`file`),
+  KEY `filehashes_file_IDX` (`file`) USING BTREE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
 
 

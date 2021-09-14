@@ -135,3 +135,7 @@ Work exactly as the get new media option, it will just check for the pages where
 ## Do not add game tags to the game name
 
 By default the scraper will look into the filenames and add anything between () and between [] to the name displayed in retropie. Disable this function with the --nonamemodif flag.
+
+## Select region and language to scrape
+
+use --region and --language flags to select your preferred choice. Defaults are 'world' and 'english'

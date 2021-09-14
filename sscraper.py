@@ -1,4 +1,4 @@
-# coding: utf-8
+# encoding=utf-8
 
 from shutil import copyfile
 import csv
@@ -127,6 +127,10 @@ try:
     whdfix = argsvals['fixwhd']
 except:
     whdfix = False
+
+
+reload(sys)  
+sys.setdefaultencoding('utf8')
 
 logging.info ('###### FIX WHDLOAD FILE '+str(whdfix))
 
@@ -435,11 +439,17 @@ def getGameName(jsondata,path):
         logging.debug ('###### NAME EXTENSION IS '+extname)
     name = None
     if 'noms' in jsondata['jeu']:
-        names = []
         logging.debug ('###### NAMES IS NOT A DICT SO CONVERTING '+str(jsondata['jeu']['noms'])+' TO '+str(jsondata['jeu']['noms'][0]))
         if isinstance(jsondata['jeu']['noms'],list):
-            logging.debug ('###### IT IS A LIST SO I RETURN FIRST OBJECT IN IT')
-            jname =jsondata['jeu']['noms'][0]['text'] 
+            logging.debug ('###### IT IS A LIST SO I ITERATE AD SEARCH FOR "wor" IN IT')
+            jname =''
+            for name in jsondata['jeu']['noms']:
+                if name['region'] =='wor':
+                    jname =name['text'] 
+                    break
+            if jname == '':    
+                logging.debug ('###### COULD NOT FIND WORLD NAME, SO DEFAULTING TO FIRST ONE')
+                jname =jsondata['jeu']['noms'][0]['text'] 
             logging.debug ('###### NAME IN JSON IS '+str(jname)+' OF TYPE '+str(type(jname)))
             return jname + extname
         else:
@@ -894,9 +904,9 @@ def getDesc(json):
                             break
                 if not found:
                     try:
-                        description = synops[0]['text']
+                        description = synops[0]['text'].decode('unicode_escape')
                     except:
-                        description =''
+                        description ='Did not find a description for this game'
     logging.debug ('###### RETURNING DESCRIPTION '+description)
     return description
 
@@ -1179,7 +1189,7 @@ def validateVideo(videofile):
         return True
     try:
         if os.stat(videofile).st_size == 0:
-            logging.debug ('###### VIDEO SIZE EQUALS ZERO')
+            logging.error ('###### VIDEO SIZE EQUALS ZERO')
             return False
         fileInfo = MediaInfo.parse(videofile)
         for track in fileInfo.tracks:
@@ -2005,7 +2015,11 @@ def grabData(system, path, CURRSSID, acceptedExtens,gamesList,dozip):
         os.remove(xmlFile)
     ### AND THEN CREATE IT
     logging.debug ('###### GOING TO CREATE NEW GAMELIST')
-    result = tree.write(xmlFile,encoding='utf-8', xml_declaration=True)
+    try:
+        result = tree.write(xmlFile,encoding='utf-8', xml_declaration=True)
+    except Exception as e:
+        logging.error ('###### COULD NOT WRITE XML '+str(e))
+        result = False
     logging.debug ('###### INTERNAL GAMELIST CREATED')
     if result != None:
         ### INFORM WE COULD NOT CREATE XML

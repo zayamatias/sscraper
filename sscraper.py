@@ -52,6 +52,8 @@ parser.add_argument('--nomarquee', help='Skips marquee downloads',action='store_
 parser.add_argument('--fixwhd', help='Fix WHD XML files and updates filenames',action='store_true')
 parser.add_argument('--debug', help='Set log to DEBUG mode',action='store_true')
 parser.add_argument('--nonamemodif', help='Do not add game name modifiers as found in filename (Version/disk/etc)',action='store_true')
+parser.add_argument('--region', help='select region for scraping, defualt is world (wor), some examples us,jp,eu,fr,sp ',nargs=1)
+parser.add_argument('--language', help='select language for scraping, defualt is english (en), some examples es,de,fr,es ',nargs=1)
 
 argsvals = vars(parser.parse_args())
 
@@ -191,6 +193,16 @@ try:
 except Exception as e:
     listMissing = False
     listMissingFile = ''
+
+try:
+    scrapeRegion = argsvals['region'][0]
+except Exception as e:
+    scrapeRegion = 'wor'
+
+try:
+    scrapeLanguage = argsvals['language'][0]
+except Exception as e:
+    scrapeLanguage = 'en'
 
 logging.info ('###### LIST MISSING '+str(listMissing)+' TO FILE '+str(listMissingFile))
 
@@ -444,9 +456,14 @@ def getGameName(jsondata,path):
             logging.debug ('###### IT IS A LIST SO I ITERATE AD SEARCH FOR "wor" IN IT')
             jname =''
             for name in jsondata['jeu']['noms']:
-                if name['region'] =='wor':
+                if name['region'] == scrapeRegion:
                     jname =name['text'] 
                     break
+            if jname == '' and scrapeRegion != 'wor':    
+                for name in jsondata['jeu']['noms']:
+                    if name['region'] == 'wor':
+                        jname =name['text'] 
+                        break
             if jname == '':    
                 logging.debug ('###### COULD NOT FIND WORLD NAME, SO DEFAULTING TO FIRST ONE')
                 jname =jsondata['jeu']['noms'][0]['text'] 
@@ -897,11 +914,20 @@ def getDesc(json):
                 if isinstance(synops,list):
                     for desc in synops:
                         logging.debug ('###### LANGUE '+desc['langue'])
+                        if desc['langue'].upper()==scrapeLanguage.upper():
+                            logging.debug ('###### FOUND YOUR LANGUAGE')
+                            description = desc['text']
+                            found = True
+                            break
+                if not found and scrapeLanguage != 'en':
+                    for desc in synops:
+                        logging.debug ('###### LANGUE '+desc['langue'])
                         if desc['langue'].upper()=='EN':
                             logging.debug ('###### FOUND YOUR LANGUAGE')
                             description = desc['text']
                             found = True
                             break
+
                 if not found:
                     try:
                         description = synops[0]['text'].decode('unicode_escape')
@@ -1223,9 +1249,23 @@ def grabMedia(URL,destfile):
             retries = retries + 1
             if retries == 3:
                 URL = re.sub(r'(\(.+\))','(wor)',URL)
+            if retries == 4:
+                URL = re.sub(r'(\(.+\))','(eu)',URL)
+            if retries == 5:
+                URL = re.sub(r'(\(.+\))','(us)',URL)
+            if retries == 6:
+                URL = re.sub(r'(\(.+\))','(jp)',URL)
+            if retries == 7:
+                URL = re.sub(r'(\(.+\))','(fr)',URL)
+            if retries == 8:
+                URL = re.sub(r'(\(.+\))','(es)',URL)
+            if retries == 9:
+                URL = re.sub(r'(\(.+\))','(de)',URL)
+            if retries == 10:
+                URL = re.sub(r'(\(.+\))','(it)',URL)
         logging.debug ('###### RESULT OF DOWNLOAD '+str(result))
         if result == -1:
-            logging.error ('##### FAILED DOWNLOAD - TRY MANUALLY wget ' + URL + ' -O ' + destfile)
+            logging.error ('##### FAILED DOWNLOAD - FILE IS NOT PRESENT IN SERVER')
             return ''
         if result == 0:
             return destfile

@@ -148,6 +148,7 @@ logging.info ('###### CLEAN SYSTEM '+str(cleanSystem))
 try:
     startid= argsvals['importgames'][0]
     migrateDB = True
+    update = True
     try:
         endid = argsvals['importgames'][1]
     except:
@@ -218,13 +219,15 @@ def initiateDBConnect():
         host=config.dbhost,
         user=config.dbuser,
         passwd=config.dbpasswd,
-        database=config.database
+        database=config.database,
+        charset='utf8mb4',
+        use_unicode=True
         )
         return thisdb
     except Exception as e:
         logging.error ('###### CANNOT CONNECT TO DATABASE '+config.dbhost+'/'+config.database+' Error:'+str(e))
         logging.error ('###### PLEASE MAKE SURE YOU HAVE A DATABASE SERVER THAT MATCHES YOUR CONFIGURATION')
-        print (str(e))
+        print ('CONNECTION TO DB FAILED '+str(e))
         sys.exit()
 
 global mydb
@@ -531,7 +534,7 @@ def searchInDBV2Call(api,params,force):
     ### Try to see if it is in cache
     if force:
         logging.debug ('###### FORCED TO RETURN EMPTY RESULT')
-        return ''
+        return None
     result = ''
     logging.debug ('###### CONNECTING TO DB TO LOCATE CACHED RESULT FOR V2 CALL')
     sql = "SELECT result FROM apicache WHERE apiname = %s AND parameters = %s"
@@ -599,7 +602,7 @@ def getV2CallFromDB(URL,forceCall):
         return response
     else:
         logging.debug ('###### DID NOT FIND V2 ANSWER IN DB')
-        return ''
+        return None
 
 def doV2URLRequest(URL):
     response = ''
@@ -692,13 +695,14 @@ def callAPIURL(URL,forceCall=False):
     response=''
     logging.debug ('####### GOING TO CALL URL '+URL)
     v2 = re.search('\/[a|A][P|p][i|I]2\/',URL)
-    logging.debug('###### IS V2 '+str(v2))
+    logging.debug('###### IS V2 '+str(v2)+' AND FORCECALL IS '+str(forceCall))
     if v2:
         response = getV2CallFromDB(URL,forceCall)
     elif not v2:
         logging.debug ('###### V1 CALLS ARE OVER, CHECK WHY YOU WANT TO CALL THIS '+str(URL))
         return 'ERROR'
-    if response != '':
+    logging.debug ('###### RESPONSE FROM DB IS '+str(response))
+    if response :
         return response
     logging.debug ('###### THERE WAS NO RESPONSE FROM DB SO I MIGHT AS WELL CALL THE API')
     successCall = False
@@ -1090,10 +1094,16 @@ def callAPI(URL, API, PARAMS, CURRSSID,Version='',tolog='',returnRaw=False,force
                 logging.debug ('###### AFTER FIX')
             if '#jsonrominfo' in result:
                 logging.debug ('###### HARD FIXING ANOTHER SCREENSCRAPER BUG, #JSONROMINFO NOT NEEDED')
-                result = result.replace('#jsonrominfo','')
+                try:
+                    result = result.replace('#jsonrominfo','')
+                except Exception as e:
+                    logging.error('###### COULD NOT REPLACE JSROMINFO '+str(e))
                 logging.debug ('###### '+str(result))
             logging.debug ('###### REPLACING WEIRD CHARACTERS')
-            new_response = result.replace('\x0d\x0a','\\r\\n').replace('\x0a','').replace('\x09','').replace('\x0b','').replace('  ','').replace('\r','')
+            try:
+                new_response = result.replace('\x0d\x0a','\\r\\n').replace('\x0a','').replace('\x09','').replace('\x0b','').replace('  ','').replace('\r','')
+            except Exception as e:
+                logging.error('###### COULD NOT REPLACE JSROMINFO '+str(e))
             logging.debug ('###### REPLACED WEIRD CHARACTERS')
             try:
                 retJson = json.loads(new_response)
@@ -2165,11 +2175,11 @@ def querySHAinDB(mysha1='None',mymd5='None',mycrc='None',filename='',sysid=0,pat
     sql = "SELECT  CONCAT ( '{\"jeu\":{\"id\":\"',mygameid,'\",\"noms\":[',COALESCE(names_result,''),'],\"synopsis\":[',COALESCE(synopsis_result,''),']\n\
             ,\"medias\":[',COALESCE(media_result,'') ,'],',COALESCE(system_result,'\"systeme\":{}'),',',COALESCE(editor_result,'\"editeur\":{}'),',',COALESCE(date_result,'\"dates\":{}'),'}}') as json\n\
             FROM (SELECT gr.gameid as mygameid,\n\
-            GROUP_CONCAT(DISTINCT '{\"region\":\"',gn.region,'\",\"text\":\"',CONVERT(gn.`text` USING ascii),'\"}') as names_result,\n\
-            GROUP_CONCAT(DISTINCT '{\"langue\":\"',gs.langue,'\",\"text\":\"',CONVERT(gs.`text` USING ascii),'\"}') as synopsis_result,\n\
+            GROUP_CONCAT(DISTINCT '{\"region\":\"',gn.region,'\",\"text\":\"',gn.`text`,'\"}') as names_result,\n\
+            GROUP_CONCAT(DISTINCT '{\"langue\":\"',gs.langue,'\",\"text\":\"',gs.`text` ,'\"}') as synopsis_result,\n\
             GROUP_CONCAT(DISTINCT '{\"type\":\"',gm.`type`,'\",\"url\":\"',gm.url,'\",\"region\":\"',gm.region,'\",\"format\":\"',gm.`format`,'\"}') as media_result,\n\
-            GROUP_CONCAT(DISTINCT '\"systeme\":{\"id\":\"',sm.id,'\",\"text\":\"',CONVERT(sm.`text` USING ascii),'\"}') as system_result,\n\
-            GROUP_CONCAT(DISTINCT '\"editeur\":{\"id\":\"',ed.id,'\",\"text\":\"',CONVERT(ed.`text` USING ascii),'\"}') as editor_result,\n\
+            GROUP_CONCAT(DISTINCT '\"systeme\":{\"id\":\"',sm.id,'\",\"text\":\"',sm.`text`,'\"}') as system_result,\n\
+            GROUP_CONCAT(DISTINCT '\"editeur\":{\"id\":\"',ed.id,'\",\"text\":\"',ed.`text`,'\"}') as editor_result,\n\
             GROUP_CONCAT(DISTINCT '\"dates\":{\"region\":\"',gd.region ,'\",\"text\":\"',gd.`text`,'\"}') as date_result\n\
             FROM gameRoms gr\n\
             LEFT JOIN gameNames gn ON gn.gameid = gr.gameid\n\
@@ -2189,7 +2199,11 @@ def locateShainDB(mysha1='None',mymd5='None',mycrc='None',filename='',sysid=0,pa
         logging.debug ('###### RECORD FOUND IN DB')
         logging.debug ('###### I\'VE FOUND WHAT YOU\'RE LOOKING FOR IN THE V2 DB')
         ###### NEED TO vREPLACE EOL CHARACRTES WITH DOUBLE BACKSLASH ESCAPED EQUIVALENT FOR DICT CONVERSION TO WORK
-        result = result.replace('\x0d\x0a','\\r\\n').replace('\x0a','').replace('\x09','').replace('\x0b','').replace('  ','').replace('\r','')
+        try:
+            result = result.replace('\x0d\x0a','\\r\\n').replace('\x0a','').replace('\x09','').replace('\x0b','').replace('  ','').replace('\r','')
+        except Exception as e:
+            logging.debug ('###### REPLACEMENT ERROR '+str(e))
+            logging.debug (str(result))            
         logging.debug ('###### WE DID FIND SOMETHING '+repr(result))
         if '{"jeu":{"id":"0",' in result:
             logging.debug ('###### ID 0 FOUND, GOING BACK TO EMPTY')
@@ -2521,7 +2535,7 @@ def writeToMissingFile(notHaveList,listMissingFile,system):
         query = "SELECT  CONCAT ( 'SCREENSCRAPER LINK https://screenscraper.fr/gameinfos.php?gameid=%s\r\nGAME NAMES:\r\n',COALESCE(names_result,'NOT KNOWN NAMES'),'\r\nROMS:\r\n',\
                  COALESCE(roms_result,'NOT KNOWN ROMS')) as missing_game\
                  FROM (SELECT gr.gameid as mygameid,\
-                 GROUP_CONCAT(DISTINCT 'Game Name : ',CONVERT(gn.`text` USING ascii),'\r\n'  SEPARATOR '' ) as names_result,\
+                 GROUP_CONCAT(DISTINCT 'Game Name : ',gn.`text`,'\r\n'  SEPARATOR '' ) as names_result,\
                  GROUP_CONCAT(DISTINCT 'Rom Name : ',gr.romfilename,'\r\n' SEPARATOR '' ) as roms_result\
                  FROM gameRoms gr\
                  LEFT JOIN gameNames gn ON gn.gameid = gr.gameid WHERE gr.gameid = %s ) as gameinfo"
@@ -3688,6 +3702,7 @@ if newinfo:
     sys.exit()
 
 if migrateDB:
+    logging.debug ('###### GOING TO IMPORT GAMES INTO DB')
     ###populate systems
     cnt=1
     systems = getAllSystems(0)
@@ -3712,7 +3727,7 @@ if migrateDB:
     mydb.commit()
     while gameid <= numGames:
         while response == 'QUOTA' or response == 'ERROR':
-            response = getGameFromAPI(gameid,currssid,False)
+            response = getGameFromAPI(gameid,currssid,True)
             if response == 'QUOTA':
                 logging.debug ('###### QUOTA IS OVER, WAITING UNTIL NEXT DAY')
                 waitNewDay('23:00:00')

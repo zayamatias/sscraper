@@ -54,6 +54,7 @@ parser.add_argument('--debug', help='Set log to DEBUG mode',action='store_true')
 parser.add_argument('--nonamemodif', help='Do not add game name modifiers as found in filename (Version/disk/etc)',action='store_true')
 parser.add_argument('--region', help='select region for scraping, defualt is world (wor), some examples us,jp,eu,fr,sp ',nargs=1)
 parser.add_argument('--language', help='select language for scraping, defualt is english (en), some examples es,de,fr,es ',nargs=1)
+parser.add_argument('--synopsis', help='Try to update synopsis that are not in the local DB',nargs=1)
 
 argsvals = vars(parser.parse_args())
 
@@ -204,6 +205,13 @@ try:
     scrapeLanguage = argsvals['language'][0]
 except Exception as e:
     scrapeLanguage = 'en'
+
+try:
+    startSynID = int(argsvals['synopsis'][0])
+    findsynops = True
+    update = True
+except:
+    findsynops = False
 
 logging.info ('###### LIST MISSING '+str(listMissing)+' TO FILE '+str(listMissingFile))
 
@@ -551,6 +559,7 @@ def searchInDBV2Call(api,params,force):
 def parsePossibleErrors(status):
     ## GENERIC ERROR PARSE FOR API CALLS, RETURNS A SHORT ERROR OR SAME RESPONSE DEPENDING
     ## ON CONTENTS
+    logging.debug ('###### WILL TRY TO IDENTIFY ERROR NBR '+str(status))
     if status == 200:
         response = 'OK'
     if status == 401 or status == 430 or status == 431:
@@ -613,24 +622,27 @@ def doV2URLRequest(URL):
         try:
             req = requests.get(URL)
             response = req.text
-            logging.debug ('##### ERROR CODE '+str(req.status_code))
-            logging.debug(response)
+            logging.debug ('##### STATUS CODE '+str(req.status_code))
         except Exception as e:
             logging.error ('###### CANNOT CALL URL - FAILING '+str(e))
             response = 'ERROR'        
             ## TODO REMOVE
+        logging.debug ('###### AFTER CALLING API RESPONSE IS '+str(response))
         if response[0]=='<':
             try:
                 response = re.sub(r'<br\s\/>(\s|\S)*<br\s\/>','',response)
             except Exception as e:
                 logging.error ('###### CANNOT TREAT RESPONSE '+str(e))
         try:
-            if req:
+            logging.debug ('###### CHECK FIRST IF WE HAVE A REQ RESPONSE '+str(req))
+            if req != None:
+                logging.debug ('###### GOING TO FIND OUT WHAT THE STATUS CODE MEANS')
                 status = parsePossibleErrors(req.status_code)
                 if status != 'OK':
                     response = status
             else:
                 response = 'RETRY'
+            logging.debug('###### AFTER RETURN FROM ERROR PARSING I GOT '+str(response))
         except Exception as e:
             logging.error ('###### ERROR WHILE PARSING ERRORS '+str(e))
         if response != 'RETRY':
@@ -696,7 +708,7 @@ def callAPIURL(URL,forceCall=False):
     logging.debug ('####### GOING TO CALL URL '+URL)
     v2 = re.search('\/[a|A][P|p][i|I]2\/',URL)
     logging.debug('###### IS V2 '+str(v2)+' AND FORCECALL IS '+str(forceCall))
-    if v2:
+    if v2 :
         response = getV2CallFromDB(URL,forceCall)
     elif not v2:
         logging.debug ('###### V1 CALLS ARE OVER, CHECK WHY YOU WANT TO CALL THIS '+str(URL))
@@ -716,7 +728,7 @@ def callAPIURL(URL,forceCall=False):
         anonURL = re.sub(r'&ssid=\w*','&ssid=',URL)
         logging.debug ('###### CALLING AS ANON')
         response = doV2URLRequest(anonURL)
-        logging.debug ('###### AFTER I HAVE CALLED THE DB TO SEARCH FOR A CACHED CALL')
+        logging.debug ('###### AFTER I HAVE CALLED THE API ANONIMOUSLY GOT '+str(response))
         if response == 'FAILED' or response == 'QUOTA':
             logging.debug ('###### FAILED TO CALL AS ANON, WILL RETRY AS IDENTIFIED')
             logging.debug (URL)
@@ -1142,9 +1154,9 @@ def callAPI(URL, API, PARAMS, CURRSSID,Version='',tolog='',returnRaw=False,force
                 VTWOQUOTA = False
         except Exception as e:
             if 'ssuser' in str(e):
-                logging.info ('###### ERROR IN GETTING INFORMATION FROM RESPONSE // PROBABLY ANON CALL [SSUSER MISSING] , NOTHING TO WORRY ABOUT '+str(e))
+                logging.debug ('###### ERROR IN GETTING INFORMATION FROM RESPONSE // PROBABLY ANON CALL [SSUSER MISSING] , NOTHING TO WORRY ABOUT '+str(e))
             elif 'requests' in str(e):
-                logging.info ('###### ERROR IN GETTING QUOTA INFORMATION IN RESPONSE '+str(e))
+                logging.debug ('###### ERROR IN GETTING QUOTA INFORMATION IN RESPONSE '+str(e))
             else:
                 logging.error ('###### ERROR IN GETTING RESPONSE '+str(e))
     if returnRaw:
@@ -2325,7 +2337,7 @@ def getGameInfo(CURRSSID, pathtofile, file, mymd5, mysha1, mycrc, sysid):
         ### DID WE GET A QUOTA LIMIT?
         if response == 'QUOTA' or response =='ERROR':
             ### YES, SO RETURN TO SKIP THE FILE IF POSSIBLE
-            logging.info ('###### '+response+' RETURNED BY API')
+            logging.debug ('###### '+response+' RETURNED BY API')
             return file, response
         ### DID THE SCRAPER RETURN A VALID ROM?
         ### USUALLY IN A VALID RESPONSE WE WOULD HAVE THE JEU KEY
@@ -2876,7 +2888,7 @@ def nameFromArcadeCSV(name):
             if row[0].upper() == name.upper():
                 logging.debug ('###### FOUND MATCH FOR '+row[1])
                 return row[1]
-        logging.info ('###### DID NOT FIND MATCH FOR '+name)
+        logging.debug ('###### DID NOT FIND MATCH FOR '+name)
     return ''
 
 def getArcadeName(name):
@@ -3405,14 +3417,14 @@ def insertGameInLocalDb(gameInfo,doupdate):
     try:
         game['notgame'] = gameInfo['notgame']
     except Exception as e:
-        logging.info ('###### ATTRIBUTE NOTGAME NOT FOUND, CREATING DEFAULT FOR '+str(game['id']))
+        logging.debug ('###### ATTRIBUTE NOTGAME NOT FOUND, CREATING DEFAULT FOR '+str(game['id']))
         game['notgame'] = False
     try:
         game['topstaff'] = gameInfo['topstaff']
         if game['topstaff'] == None:
             game['topstaff'] = 0
     except Exception as e:
-        logging.info ('###### ATTRIBUTE TOPSTAFF NOT FOUND, CREATING DEFAULT FOR '+str(game['id']))
+        logging.debug ('###### ATTRIBUTE TOPSTAFF NOT FOUND, CREATING DEFAULT FOR '+str(game['id']))
         game['topstaff'] = 0
 
     try:
@@ -3420,20 +3432,20 @@ def insertGameInLocalDb(gameInfo,doupdate):
         if game['cloneof'] == None:
             game['cloneof'] = 0
     except Exception as e:
-        logging.info ('###### ATTRIBUTE CLONEOF NOT FOUND, CREATING DEFAULT FOR '+str(game['id']))
+        logging.debug ('###### ATTRIBUTE CLONEOF NOT FOUND, CREATING DEFAULT FOR '+str(game['id']))
         game['cloneof'] = 0
 
     try:
         game['joueurs'] = gameInfo['joueurs']['text']
     except Exception as e:
-        logging.info ('###### ATTRIBUTE PLAYERS NOT FOUND, CREATING DEFAULT FOR '+str(game['id']))
+        logging.debug ('###### ATTRIBUTE PLAYERS NOT FOUND, CREATING DEFAULT FOR '+str(game['id']))
         game['joueurs'] = 0
     try:
         game['rotation'] = gameInfo['rotation']
         if game['rotation'] == None:
             game['rotation'] = 0
     except Exception as e:
-        logging.info ('###### ATTRIBUTE ROTATION NOT FOUND, CREATING DEFAULT FOR '+str(game['id']))
+        logging.debug ('###### ATTRIBUTE ROTATION NOT FOUND, CREATING DEFAULT FOR '+str(game['id']))
         game['rotation'] = 0
     try:
         game['system'] = gameInfo['systeme']['id']
@@ -3441,13 +3453,13 @@ def insertGameInLocalDb(gameInfo,doupdate):
         try:
             game['system'] = gameInfo['systemeid']
         except Exception as e:
-            logging.info ('###### ATTRIBUTE SYSTEMID NOT FOUND, CREATING DEFAULT FOR '+str(game['id']))
+            logging.debug ('###### ATTRIBUTE SYSTEMID NOT FOUND, CREATING DEFAULT FOR '+str(game['id']))
             game['system'] = 0
     try:
         game['editeur'] = gameInfo['editeur']['id']
         #insertEditorInLocalDb(game['editeur'],gameInfo['editeur']['text'])
     except Exception as e:
-        logging.info ('###### ATTRIBUTE EDITOR NOT FOUND, CREATING DEFAULT FOR '+str(game['id']))
+        logging.debug ('###### ATTRIBUTE EDITOR NOT FOUND, CREATING DEFAULT FOR '+str(game['id']))
         game['editeur'] = 0
     logging.debug ('###### GAME INFO IS '+str(game))
     insertGameDataInLocalDB(game,doupdate)
@@ -3455,13 +3467,15 @@ def insertGameInLocalDb(gameInfo,doupdate):
         logging.debug ('###### NAMES ARE '+str(gameInfo['noms']))
         insertGameNamesInDB(game['id'],gameInfo['noms'],doupdate)
     except Exception as e:
-        logging.info ('###### COULD NOT FIND NAMES FOR THE GAME')
+        logging.debug ('###### COULD NOT FIND NAMES FOR THE GAME')
     try:
         synopsis = gameInfo['synopsis']
         insertSynopsisInDB(game['id'],synopsis,doupdate)
     except Exception as e:
-        logging.info ('###### COULD NOT FIND SYNOPSIS FOR THE GAME -'+str(e)+' - DEFAULTING')
-        ###synopsis = [{'langue':'UNK','text':''}]
+        if findsynops:
+            logging.info ('###### COULD NOT FIND SYNOPSIS FOR THE GAME -'+str(e)+' - DEFAULTING')
+        else:
+            logging.debug ('###### COULD NOT FIND SYNOPSIS FOR THE GAME -'+str(e)+' - DEFAULTING')
     try:
         logging.debug('###### INSERTING ROMS')
         insertGameRomsInDB(game['id'],  gameInfo['roms'],game['system'],doupdate)
@@ -3471,13 +3485,13 @@ def insertGameInLocalDb(gameInfo,doupdate):
         medias = gameInfo['medias']
         insertGameMediasInDB(game['id'],medias,game['system'],doupdate)
     except Exception as e:
-        logging.info ('###### COULD NOT FIND MEDIAS FOR THE GAME -'+str(e)+' - DEFAULTING')
+        logging.debug ('###### COULD NOT FIND MEDIAS FOR THE GAME -'+str(e)+' - DEFAULTING')
         ##medias = [{'type':'unk','url':'unk','region':'unk','format':'unk'}]
     try:
         dates = gameInfo['dates']
         insertGameDatesInDB(game['id'], dates,doupdate)
     except Exception as e:
-        logging.info ('###### COULD NOT FIND DATES FOR THE GAME -'+str(e)+' - DEFAULTING')
+        logging.debug ('###### COULD NOT FIND DATES FOR THE GAME -'+str(e)+' - DEFAULTING')
         ##dates = [{'region':'unk','text':'0'}]
     return True
 
@@ -3556,7 +3570,7 @@ def locateGamesInPage(pagehtml,ssid):
     try:
         gidsrch = re.finditer('gameinfos\.php\?plateforme=\d*&gameid=(\d*)',pagehtml)
         if gidsrch != None:
-            logging.info('###### MATCHES '+str(gidsrch))
+            logging.debug('###### MATCHES '+str(gidsrch))
             procgames = []
             for gid in gidsrch:
                 gameid = gid.group(1)
@@ -3701,6 +3715,55 @@ if newinfo:
     logging.info ('###### DONE GETTING ALL NEW MEDIA IN RANGE ')
     sys.exit()
 
+def updateGameFromAPI(gameid,currssid):
+    response = 'QUOTA'
+    while response == 'QUOTA' or response == 'ERROR':
+        response = getGameFromAPI(gameid,currssid,True)
+        if response == 'QUOTA':
+            logging.debug ('###### QUOTA IS OVER, WAITING UNTIL NEXT DAY')
+            waitNewDay('23:00:00')
+        if response == 'NOT FOUND':
+            logging.error('###### ID '+str(gameid)+' DOES NOT SEEM TO EXIST IN SCREENSCRAPER')
+    logging.debug ('####### RESPONSE FROM API CALL ')###+str(response))
+    '''
+    if response != 'ERROR' and response != 'NOT FOUND':
+        logging.debug ('###### GOING TO INSERT GAMEID '+str(gameid)+' IN DB')
+        sql = 'SELECT id from games where id = %s'
+        val = (gameid,)
+        exists,success = queryDB(sql,val,False,mydb)
+        if isinstance (response,dict):
+            if (str(exists) != str(gameid)) or UPDATEDATA:
+                insertGameInLocalDb(response['jeu'],UPDATEDATA)
+    '''
+    return
+
+
+if findsynops:
+    query = 'SELECT gameid from gameNames gn where gameid not in (select distinct gameid from gameSynopsis gs) group by gameid'
+    vals = ()
+    result = queryDB(query,vals,False,mydb)
+    cnt = 1
+    maxssid = len(config.ssid)
+    currssid = 0    
+    for tup in result[0]:
+        gameid = int(tup[0])
+        if gameid >= startSynID:
+            ## Update games without synopis
+            logging.info ('###### FETCHING SYNOPSIS FOR GAME '+str(gameid))
+            updateGameFromAPI(gameid,currssid)
+            if cnt == 50:
+                mydb.commit()
+                cnt = 0
+            else:
+                cnt = cnt + 1
+            currssid = currssid + 1
+            if currssid == maxssid:
+                currssid = 0
+            logging.info ('###### DONE FETCHING SYNOPSIS FOR GAME '+str(tup[0]))
+    sys.exit()
+
+
+
 if migrateDB:
     logging.debug ('###### GOING TO IMPORT GAMES INTO DB')
     ###populate systems
@@ -3720,31 +3783,15 @@ if migrateDB:
     else:
         numGames = endid
     logging.info('###### MIGRATING GAMES FROM '+str(gameid)+' UNTIL '+str(endid))
-    response = 'QUOTA'
     #### THis game with id Zero is going to be used to handle unknown roms
     zeroGame={'id':'0'}
     insertGameInLocalDb(zeroGame,UPDATEDATA)
     mydb.commit()
     while gameid <= numGames:
-        while response == 'QUOTA' or response == 'ERROR':
-            response = getGameFromAPI(gameid,currssid,True)
-            if response == 'QUOTA':
-                logging.debug ('###### QUOTA IS OVER, WAITING UNTIL NEXT DAY')
-                waitNewDay('23:00:00')
-            if response == 'NOT FOUND':
-                logging.error('###### ID '+str(gameid)+' DOES NOT SEEM TO EXIST IN SCREENSCRAPER')
-        logging.debug ('####### RESPONSE FROM API CALL ')###+str(response))
-        if response != 'ERROR' and response != 'NOT FOUND':
-            logging.debug ('###### GOING TO INSERT GAMEID '+str(gameid)+' IN DB')
-            sql = 'SELECT id from games where id = %s'
-            val = (gameid,)
-            exists,success = queryDB(sql,val,False,mydb)
-            if isinstance (response,dict):
-                if (str(exists) != str(gameid)) or UPDATEDATA:
-                    insertGameInLocalDb(response['jeu'],UPDATEDATA)
+        updateGameFromAPI(gameid,currssid)
         if cnt == 50:
-	        mydb.commit()
-	        cnt = 0
+            mydb.commit()
+            cnt = 0
         else:
             cnt = cnt + 1
         logging.info ('###### DONE GAME '+str(gameid))
@@ -3753,6 +3800,9 @@ if migrateDB:
         currssid = currssid + 1
         if currssid == maxssid:
             currssid = 0
+ 
+ 
+ 
     ## Now all games have been imported into local DB
     mydb.commit()
     ### TODO REMOVE

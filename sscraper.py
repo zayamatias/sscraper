@@ -315,11 +315,11 @@ class Game:
         logging.debug ('###### GOING TO GET EDITOR/DEVELOPER')
         self.developer = ''
         try:
-            if 'editeur' in jsondata['jeu'].keys:
-                self.publisher = jsondata['jeu']['editeur']
+            if 'editeur' in jsondata['jeu'].keys():
+                self.publisher = jsondata['jeu']['editeur']['text']
             else:
                 self.publisher =''
-        except:
+        except Exception as e:
             self.publisher =''
         self.genre = ''
         self.players = ''
@@ -3720,7 +3720,7 @@ def updateGameFromAPI(gameid,currssid):
     while response == 'QUOTA' or response == 'ERROR':
         response = getGameFromAPI(gameid,currssid,True)
         if response == 'QUOTA':
-            logging.debug ('###### QUOTA IS OVER, WAITING UNTIL NEXT DAY')
+            logging.INFO ('###### QUOTA IS OVER, WAITING UNTIL NEXT DAY')
             waitNewDay('23:00:00')
         if response == 'NOT FOUND':
             logging.error('###### ID '+str(gameid)+' DOES NOT SEEM TO EXIST IN SCREENSCRAPER')

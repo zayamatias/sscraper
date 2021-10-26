@@ -26,6 +26,7 @@ import argparse
 import re
 import config
 import shutil
+from ftplib import FTP
 
 ### Parse arguments first
 ### Arguments are :
@@ -49,6 +50,7 @@ parser.add_argument('--log', help='logfile output, by default sv2log.txt',nargs=
 parser.add_argument('--listmissing', help='creates a list of missing games per system on the file of your choice',nargs=1)
 parser.add_argument('--nobezel', help='Skips bezel downloads',action='store_true')
 parser.add_argument('--nomarquee', help='Skips marquee downloads',action='store_true')
+parser.add_argument('--downloadmissing', help='Try to download missing roms',action='store_true')
 parser.add_argument('--fixwhd', help='Fix WHD XML files and updates filenames',action='store_true')
 parser.add_argument('--debug', help='Set log to DEBUG mode',action='store_true')
 parser.add_argument('--nonamemodif', help='Do not add game name modifiers as found in filename (Version/disk/etc)',action='store_true')
@@ -124,6 +126,13 @@ except:
     nomarquee = False
 
 logging.info ('###### NO MARQUEES '+str(nomarquee))
+
+try:
+    downloadMissing = argsvals['downloadmissing']
+except:
+    downloadMissing = False
+
+logging.info ('###### DOWNLOAD MISSING ROMS '+str(downloadMissing))
 
 
 try:
@@ -1257,6 +1266,7 @@ def grabMedia(URL,destfile):
         while (result !=0) and (retries <10):
             logging.debug ('###### WILL WGET MEDIA')
             try:
+                origURL = URL
                 result = subprocess.call(['wget','--retry-connrefused','--waitretry=1','--read-timeout=20','--timeout=15','-t','0','-c','-q', URL, '-O', destfile])
             except Exception as e:
                 logging.error('###### CANNOT WGET MEDIA '+str(e))
@@ -1288,6 +1298,7 @@ def grabMedia(URL,destfile):
         logging.debug ('###### RESULT OF DOWNLOAD '+str(result))
         if result == -1:
             logging.error ('##### FAILED DOWNLOAD - FILE IS NOT PRESENT IN SERVER')
+            logging.error ('###### TRY wget '+origURL+' -O '+destfile)
             return ''
         if result == 0:
             return destfile
@@ -1870,10 +1881,10 @@ def goForFile(file,path,CURRSSID,extensions,sysid):
         ### RETURN THE FILE AND EMPTY GAME INFORMATION
         return file,None
     ### WE START PROCESSING FILES ACCORDING TO EXTENSIONS
-    if exten == '.7z' or exten == '.rar':
-        ### 7Z AND RAR FILES ARE NOT YET PROCESSED
-        logging.debug ('###### NOT PROCESSING RAR OR 7Z EXENSIONS')
-        return file,None
+    #if exten == '.7z' or exten == '.rar':
+    #    ### 7Z AND RAR FILES ARE NOT YET PROCESSED
+    #    logging.debug ('###### NOT PROCESSING RAR OR 7Z EXENSIONS')
+    #    return file,None
     if exten == '.zip':
         ### IF EXTENSION IS ZIP, WE DO SOMETHING SPECIAL, WE DO NOT CHECK ONLY THE ZIP FILE, BUT ALSO ITS CONTENTS
         try:
@@ -2535,6 +2546,202 @@ def getAllGames(sysid):
         logging.error ('####### ERROR '+str(e))
         return []
 
+
+def ftpDownload(ftpsite,user,password,subdir,originfile,destination):
+    result = 1
+    connection = 0
+    retries = 10
+    while retries > 0 and connection == 0:
+        try:
+            ftp = FTP(ftpsite, user,password)
+            connection = 1
+        except Exception as e:
+            logging.error ('###### COULD NOT CONNECT TO FTP '+ftpsite+' ERROR '+str(e))
+        retries = retries - 1
+    if connection == 0:
+        logging.error ('###### COUND NOT CONNECT TO FTP AFTER SEVERAL RETRIES')
+        return result
+    try:
+        ftp.login()
+    except Exception as e:
+        logging.error ('###### COULD NOT LOGIN TO FTP '+str(e))
+    try:
+        ftp.cwd(subdir)
+    except Exception as e:
+        logging.error ('###### COULD NOT CHANGE TO DIRECTORY '+subdir+' ERROR '+str(e))
+    lf = open(destination, "wb")
+    try:
+        ftp.retrbinary("RETR " + originfile, lf.write, 8*1024)
+        result = 0
+    except Exception as e:
+        logging.error ('###### COULD NOT DOWNLOAD FILE '+str(e))
+    lf.close()
+    try:
+        ftp.close()
+    except Exception as e:
+        logging.error ('###### COULD NOT CLOSE CONNECTION TO FTP '+str(e))
+    return result
+
+def getRomList(gameid):
+    result = None
+    query = 'SELECT distinct gr.romfilename FROM gameRoms gr WHERE gr.gameid = %s'
+    vals =(gameid)
+    sqlresult = queryDB(query,vals,False,mydb)
+    if not type(sqlresult[0]) is tuple :
+        result = ((sqlresult,),True)
+    else:
+        result = sqlresult
+    return result
+
+def httpDownload(system,missingids):
+    logging.info ('###### YOU HAVE '+str(len(missingids))+' MISSING GAMES FOR '+system)
+    destdir = '/home/pi/missing/'+system.lower()+'/'
+    try:
+        downconf = config.httpconfig[system.upper()]
+    except Exception as e:
+        logging.error('###### THERE IS NO HTTP CONFIG FOR SYSTEM '+system.upper())
+        return -1
+    ## GET ALL ADRESSES FIRST
+    collection = []
+    logging.info ('###### CREATING LIST OF AVAILABLE ROMS ON THE WEB')
+    for site in downconf:
+        regex = site['regex']
+        cregex = re.compile(regex,re.MULTILINE)
+        url = site['httpsite']
+        data = ''
+        if '__SUBDIR__' not in url:
+            retries = 10
+            if retries > 0:
+                try:
+                    r = requests.get(url, timeout=None)
+                except Exception as e:
+                    logging.error ('###### CANNOT CONNECT TO '+url+' ERROR: '+str(e))
+                if r.status_code == 200:
+                   retries = 0
+                else:
+                    retries = retries - 1
+            data = r.text
+            if site['prefixaddress']:
+                data1 = r.text.replace('href="','href="'+url)
+                data = data1.replace('HREF="','HREF="'+url)
+            findings=cregex.findall(data)
+            logging.debug ('###### FOUND MATCHES '+str(len(findings))+' for '+str(site))
+            collection.extend(findings)
+        else:
+            for char in site['subdirs']:
+                newurl = url.replace('__SUBDIR__',char)
+                retries = 10
+                while retries > 0:
+                    try:
+                        r = requests.get(newurl,timeout=None)
+                    except Exception as e:
+                        logging.error ('###### CANNOT CONNECT TO '+url+' ERROR: '+str(e))
+                    if r.status_code==200:
+                        retries = 0
+                        if site['prefixaddress']:
+                            data1 = r.text.replace('href="','href="'+newurl)
+                            data = data1.replace('HREF="','HREF="'+newurl)
+                        else:
+                            data = r.text
+                    else:
+                        retries=retries-1
+                        logging.error ('###### CANNOT ACCESS SITE '+newurl+' ERROR CODE '+str(r.status_code))
+                    findings=cregex.findall(data)
+                    collection.extend(findings)
+    logging.info ('###### FOUND '+str(len(collection))+' ROMS ONLINE')
+    ### GET LIST OF MISSING ROMS
+    for id in missingids:
+        result = getRomList(id)
+        if result[0] and (not result[0][0][0] is None):
+            for rom in result[0]:
+                logging.info ('###### LOOKING FOR '+rom[0])
+                for drom in collection:
+                    ## Do not look for extensions, sometimes extensions are missing but not the files
+                    if rom[0][:rom[0].rindex('.')+1].lower() in drom[1].lower():
+                        logging.info ('###### FOUND IT! ')
+                        try:
+                            destfile = destdir + drom[1][drom[1].rindex('/'):]
+                        except:
+                            destfile = destdir + drom[1]
+                        if drom[0][0] == '/' and drom[0][1] == '/' :
+                            romurl = drom[0].replace('//','')
+                        else:
+                            romurl = drom[0]
+                        retries = 10
+                        while retries > 0: 
+                            try:
+                                command = ['wget','--retry-connrefused','--waitretry=1','--read-timeout=20','--timeout=15','--tries=5','-c','-q', romurl, '-O', destfile]
+                                logging.debug ('###### EXECUTING '+str(command))
+                                result = subprocess.call(command)
+                            except Exception as e:
+                                logging.error ('###### COULD NOT DOWNLOAD FILE '+str(e))
+                                result = -1
+                            if result == 0:
+                                logging.info ('###### FILE SUCCESFULLY DOWNLOADED')
+                                try:
+                                    missingids.remove(id)
+                                except Exception as e:
+                                    logging.debug('ID WAS ALREADY REMOVED')
+                                break
+                            else:
+                                try:
+                                    if os.path.isfile(destfile):
+                                        os.remove(destfile)
+                                except:
+                                    logging.debug('###### DOWNLOADED FILE WAS ALREADY REMOVED')
+                            retries = retries -1
+                        if retries > 0:
+                            break
+                        else:
+                            logging.error ('####### FAILED TO wget --retry-connrefused --waitretry=1 --read-timeout=20 --timeout=15 --tries=5 -c -q '+romurl+' -O '+destfile )
+    return missingids     
+
+def downloadRoms (system,missingids):
+    logging.debug ('###### MISSING GAMES '+str(missingids))
+    logging.info ('###### DOWNLOADING MISSING ROMS FOR '+system)
+    destdir = '/home/pi/missing/'+system.lower()+'/'
+    try:
+        myftpconf = config.ftpconfig[system.upper()]
+        site = myftpconf['ftpsite']
+        user = myftpconf['user']
+        password = myftpconf['password']
+        subdir = myftpconf['subdir']
+    except Exception as e:
+        logging.error('###### FTP DOWNLOAD CONFIG IS NOT PROPERLY DONE, PLS CHECK '+str(e))
+    logging.info ('###### SAVING IN '+destdir)
+    if not os.path.exists(destdir):
+        os.makedirs(destdir)
+    missingids = httpDownload(system,missingids)
+    if type(missingids)==int:
+        return
+    for id in missingids:
+        result = getRomList(id)
+        if result[0] and (not result[0][0][0] is None):
+            for rom in result[0]:
+                try:
+                    if myftpconf['addletter']:
+                        downdir = subdir + rom[0][0].upper()
+                    else:
+                        downdir = subdir
+                except Exception as e:
+                    logging.error('###### DOWNLOAD CONFIG IS NOT PROPERLY DONE, PLS CHECK '+str(e))
+                    return
+                downfile = str(rom[0])
+                destfile = destdir +str(rom[0])
+                logging.info ('###### '+str(id)+' DOWNLOADING '+downfile)
+                downresult = 1 ##ftpDownload(site,user,password,downdir,downfile,destfile)
+                logging.debug ('###### DOWNLOADING RESULTED IN '+str(downresult))
+                if int(downresult) == 0:
+                    try:
+                        missingids.remove(id)
+                    except Exception as e:
+                        logging.debug ('###### ID REMOVED ALREADY')
+                else:
+                    if os.path.isfile(destfile):
+                        os.remove(destfile)
+                ##sleep(5)
+    return missingids
+
 def writeToMissingFile(notHaveList,listMissingFile,system):
     logging.debug ('###### GOING TO WRITE MISSING FILE ['+listMissingFile+']')
     f = open(listMissingFile,'a+')
@@ -2543,22 +2750,25 @@ def writeToMissingFile(notHaveList,listMissingFile,system):
         f.write('SYSTEM : '+system+'\r\n')
     except Exception as e:
         logging.error ('###### SYSTEM IS INVALID '+str(e))
-    for id in notHaveList:
-        query = "SELECT  CONCAT ( 'SCREENSCRAPER LINK https://screenscraper.fr/gameinfos.php?gameid=%s\r\nGAME NAMES:\r\n',COALESCE(names_result,'NOT KNOWN NAMES'),'\r\nROMS:\r\n',\
-                 COALESCE(roms_result,'NOT KNOWN ROMS')) as missing_game\
-                 FROM (SELECT gr.gameid as mygameid,\
-                 GROUP_CONCAT(DISTINCT 'Game Name : ',gn.`text`,'\r\n'  SEPARATOR '' ) as names_result,\
-                 GROUP_CONCAT(DISTINCT 'Rom Name : ',gr.romfilename,'\r\n' SEPARATOR '' ) as roms_result\
-                 FROM gameRoms gr\
-                 LEFT JOIN gameNames gn ON gn.gameid = gr.gameid WHERE gr.gameid = %s ) as gameinfo"
-        vals = (id,id)
-        result = queryDB(query,vals,False,mydb)
-        try:
-            f.write('----------------------------------------------------------------------------------------\r\n')
-            f.write(result[0])
-            f.write('----------------------------------------------------------------------------------------\r\n')
-        except Exception as e:
-            logging.error ('###### CANNOT WRITE TO MISSING FILE '+str(e))
+    if downloadMissing :
+        notHaveList = downloadRoms(system,notHaveList)
+    if not notHaveList is None:
+        for id in notHaveList:
+            query = "SELECT  CONCAT ( 'SCREENSCRAPER LINK https://screenscraper.fr/gameinfos.php?gameid=%s\r\nGAME NAMES:\r\n',COALESCE(names_result,'NOT KNOWN NAMES'),'\r\nROMS:\r\n',\
+                    COALESCE(roms_result,'NOT KNOWN ROMS')) as missing_game\
+                    FROM (SELECT gr.gameid as mygameid,\
+                    GROUP_CONCAT(DISTINCT 'Game Name : ',gn.`text`,'\r\n'  SEPARATOR '' ) as names_result,\
+                    GROUP_CONCAT(DISTINCT 'Rom Name : ',gr.romfilename,'\r\n' SEPARATOR '' ) as roms_result\
+                    FROM gameRoms gr\
+                    LEFT JOIN gameNames gn ON gn.gameid = gr.gameid WHERE gr.gameid = %s ) as gameinfo"
+            vals = (id,id)
+            result = queryDB(query,vals,False,mydb)
+            try:
+                f.write('----------------------------------------------------------------------------------------\r\n')
+                f.write(result[0])
+                f.write('----------------------------------------------------------------------------------------\r\n')
+            except Exception as e:
+                logging.error ('###### CANNOT WRITE TO MISSING FILE '+str(e))
     f.write('++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++\r\n')
     f.close()
 
@@ -3833,3 +4043,4 @@ if whdfix:
     sys.exit(0)
 ## Default behaviour
 scrapeRoms(CURRSSID,listMissingFile)
+##downloadRoms('msx',[94430, 94606, 94629, 94630, 94864, 94886, 94940, 95106, 95157, 95171, 95180, 95245, 95246, 95247, 95248, 95254, 95255, 95256, 95306, 95307, 95308, 95309, 95310, 95367, 95368, 95372, 95554, 95555, 95557, 95675, 95694, 95702, 95722, 95797, 96030, 96080, 96127, 96134, 96135, 96136, 96163, 96167, 96180, 96181, 96182, 96183, 96211, 96224, 96294, 96327, 96454, 96662, 96673, 96773, 96833, 96836, 96855, 96868, 96964, 96994, 97007, 97266, 97304, 97324, 97327, 98702, 98703, 98705, 98706, 98707, 98708, 98709, 98710, 99353, 109054, 142830, 142954, 142992, 143249, 153190, 153192, 153193, 154975, 176848, 176854, 176855, 176856, 176857, 176858, 176859, 176860, 176866, 176871, 176872, 176874, 176876, 176877, 176879, 176880, 176881, 176885, 176886, 176888, 176890, 176892, 176894, 176895, 176898, 176900, 176902, 176903, 176904, 176905, 176908, 176910, 176911, 176913, 176914, 176915, 176917, 176918, 176919, 176921, 176922, 176924, 176927, 176932, 176935, 176936, 176937, 176941, 176943, 176944, 176945, 176946, 176948, 176950, 176951, 176956, 176957, 176958, 176959, 176960, 176961, 176962, 176963, 176965, 176968, 176972, 176973, 176977, 176978, 177001, 177003, 177010, 177020, 177045, 177049, 177050, 177051, 177052, 177053, 177054, 177055, 177057, 177059, 177060, 177062, 177064, 184868, 184869, 184883, 184978, 185119, 185367, 185381, 185419, 185464, 185474, 185493, 185665, 185680, 185704, 185705, 185719, 185720, 185721, 185722, 185791, 185810, 185819, 185850, 192461, 192464, 192466, 192468, 192469, 192472, 192474, 192475, 192476, 200199, 200209, 200211, 200469, 210755, 214475, 214686, 214689, 214692, 250141, 250294, 250737, 262513, 262516, 269010])

@@ -40,6 +40,7 @@ parser.add_argument('--update', help='Update local DB information from screenscr
 parser.add_argument('--clean', help='Clean a system from the DB, deletes all records from files', action='store_true')
 parser.add_argument('--rename', help='Rename files to match the actual game name in the DB', action='store_true')
 parser.add_argument('--importgames', help='Start importing DB at gameid',nargs=2)
+parser.add_argument('--importlist', help='Start importing from CSV file',nargs=1)
 parser.add_argument('--localdb', help='Use only local DB for scraping (except media)', action='store_true')
 parser.add_argument('--getroms', help='Get new roms starting from ID and ending in ID', nargs=2)
 parser.add_argument('--getnewmedia', help='Get new media, give end page number as parameter', nargs=1)
@@ -57,6 +58,7 @@ parser.add_argument('--nonamemodif', help='Do not add game name modifiers as fou
 parser.add_argument('--region', help='select region for scraping, defualt is world (wor), some examples us,jp,eu,fr,sp ',nargs=1)
 parser.add_argument('--language', help='select language for scraping, defualt is english (en), some examples es,de,fr,es ',nargs=1)
 parser.add_argument('--synopsis', help='Try to update synopsis that are not in the local DB',nargs=1)
+parser.add_argument('--noparse', help='Do not parse ROMS (just sorts & clean media)',action='store_true')
 
 argsvals = vars(parser.parse_args())
 
@@ -155,6 +157,20 @@ logging.info ('###### RENAME FILES '+str(dbRename))
 cleanSystem = argsvals['clean']
 logging.info ('###### CLEAN SYSTEM '+str(cleanSystem))
 
+
+
+try:
+    csvFile= argsvals['importlist'][0]
+    fromFile = True
+    update = True
+    try:
+        endid = argsvals['importgames'][1]
+    except:
+        endid = 0
+except:
+    fromFile = False
+
+
 try:
     startid= argsvals['importgames'][0]
     migrateDB = True
@@ -221,6 +237,13 @@ try:
     update = True
 except:
     findsynops = False
+
+try:
+    noparse = argsvals['noparse']
+    logging.debug ('##### NO PARSE SET TO TRUE')
+except:
+    noparse = False
+    logging.debug ('##### NO PARSE SET TO FALSE')
 
 logging.info ('###### LIST MISSING '+str(listMissing)+' TO FILE '+str(listMissingFile))
 
@@ -449,13 +472,40 @@ def getDBCursor(theDB):
                 logging.error ('###### CANNOT RECONNECT TO DB '+str(e))
     return thiscursor
 
+
+def importSystems():
+    #Importing Systems into DB
+    logging.debug ('###### IMPORTING SYSTEMS INTO DB')
+    systems = getAllSystems(0)      
+    for system in systems:
+        logging.debug ('###### SYSTEM '+str(system))
+        insertSystemInLocalDb (system)    
+    mydb.commit()
+    logging.debug ('###### ALL SYSTEMS INSERTED INTO DB')
+    try:
+        arcadeSystemsQ = queryDB('SELECT id FROM systems WHERE TYPE=%s',('arcade',),False,mydb)
+    except Exception as e:
+        logging.error ('FAILED GETTING SYSTEMS, WILL EXIT NOW '+str)
+        sys.exit(0)
+    return arcadeSystemsQ
+
+
 def getArcadeSystems():
     arcsys = []
-    arcadeSystemsQ = queryDB('SELECT id FROM systems WHERE TYPE=%s',('arcade',),False,mydb)
+    try:
+        arcadeSystemsQ = queryDB('SELECT id FROM systems WHERE TYPE=%s',('arcade',),False,mydb)
+        logging.debug ('###### GOT SOMETHING FROM THE DB '+str(arcadeSystemsQ))
+    except Exception as e:
+        logging.error ('###### CANNOT FIND SYSTEMS - WILL IMPORT THEM '+str(e))
+    if arcadeSystemsQ[0] is None:
+        logging.debug('###### DB RETURN WAS EMPTY - GOING TO QUERY API')
+        arcadeSystemsQ = importSystems()
     for arcadesys in arcadeSystemsQ[0]:
         arcsys.append(str(arcadesys[0])) 
     arcsys.append('75')
+    logging.debug ('###### ARCADE SYSTEMS '+str(arcsys))
     return arcsys
+
 
 def getGameName(jsondata,path):
     logging.debug('###### IN GAME NAME GAMEPATH '+str(path))
@@ -525,6 +575,10 @@ def updateInDBV2Call(api,params,response):
     newresponse, success = queryDB(sql,val,True,mydb,False)
     logging.debug ('###### RETURNED FROM INSERTING IN DB')
     jres = None
+    logging.debug ('API NAME IS '+api)
+    if api.upper() != 'JEUINFOS.PHP':
+        logging.debug('###### THIS IS NOT AN API FOR GAMES - SO NO FURTHER PROCESSING NEEDED')
+        return True
     if success:
         try:
             logging.debug ('###### WILL SEE IF IT IS PROPER JSON')
@@ -717,13 +771,14 @@ def callAPIURL(URL,forceCall=False):
     logging.debug ('####### GOING TO CALL URL '+URL)
     v2 = re.search('\/[a|A][P|p][i|I]2\/',URL)
     logging.debug('###### IS V2 '+str(v2)+' AND FORCECALL IS '+str(forceCall))
-    if v2 :
+    if v2 and not forceCall:
         response = getV2CallFromDB(URL,forceCall)
     elif not v2:
         logging.debug ('###### V1 CALLS ARE OVER, CHECK WHY YOU WANT TO CALL THIS '+str(URL))
         return 'ERROR'
     logging.debug ('###### RESPONSE FROM DB IS '+str(response))
-    if response :
+    logging.debug ('###### RESPONSE FROM DB IS '+response)
+    if response != '':
         return response
     logging.debug ('###### THERE WAS NO RESPONSE FROM DB SO I MIGHT AS WELL CALL THE API')
     successCall = False
@@ -755,12 +810,12 @@ def callAPIURL(URL,forceCall=False):
         if response == 'FAILED':
             logging.debug ('###### FAILED TO CALL AS IDENTIFIED WILL RETRY AS ANON')
             sleep (180)
-    
     logging.debug ('###### AN ACCEPTABLE ANSWER WAS FOUND, GOING TO PROCESS IT')
     newresponse = tryToFixResponse(response)
     if v2 and newresponse!='':
         logging.debug ('###### GOING TO UPDATE CACHE IN DB FOR V2')
         apiname,dbparams = getV2CallInfo(URL)
+        logging.debug ('###### V2 PARAMS ARE '+apiname+' AND '+dbparams)
         updateInDBV2Call(apiname,dbparams,newresponse)
     else:
         logging.debug ('###### THIS IS NOT A V2 CALL ???? '+str(v2))
@@ -788,18 +843,22 @@ def cleanMedia (directory,extension):
     for key in cands:
         for file in filemap[key]:
             for cfile in filemap[key]:
-                if not os.path.islink(file) and file != cfile and (sha1(file) == sha1(cfile)):
-                    if not os.path.islink(cfile) and (sha1(file) == sha1(cfile)):
-                        ### YES, THEY ARE THE SAME FILES WITH DIFFERENT NAMES
-                        logging.debug ('###### Found match '+cfile+' with '+file)
-                        try:
-                            ### DELETE DUPLICATE
-                            subprocess.call (['rm',cfile])
-                            ### AND CREATE SYMLINK TO SAME FILE
-                            subprocess.call (['ln','-s',file,cfile])
-                        except Exception as e:
-                            ### SOMETHING HAPPENED, LOG IT
-                            logging.error ('###### COULD NOT CLEANUP '+str(e))
+                if cfile != file:
+                    if not os.path.islink(file):
+                        shfa = sha1(file,True)
+                        shfb = sha1(cfile,True)
+                        if (shfa == shfb):
+                            if not os.path.islink(cfile) and (shfa == shfb):
+                                ### YES, THEY ARE THE SAME FILES WITH DIFFERENT NAMES
+                                logging.debug ('###### Found match '+cfile+' with '+file)
+                                try:
+                                    ### DELETE DUPLICATE
+                                    subprocess.call (['rm',cfile])
+                                    ### AND CREATE SYMLINK TO SAME FILE
+                                    subprocess.call (['ln','-s',file,cfile])
+                                except Exception as e:
+                                    ### SOMETHING HAPPENED, LOG IT
+                                    logging.error ('###### COULD NOT CLEANUP '+str(e))
     return
 
 def getRating(json):
@@ -1057,6 +1116,8 @@ def waitNewDay(runTime):
     return
 
 def callAPI(URL, API, PARAMS, CURRSSID,Version='',tolog='',returnRaw=False,forceCall=False):
+    logging.debug ('###### INSIDE CALL API')
+    logging.debug ('###### PARAMS IS '+str(PARAMS))
     ## REMOVE CRC AND MD5, TENDS TO FAIL IN v2
     PARAMS.pop('md5',None)
     PARAMS.pop('crc',None)   
@@ -1074,6 +1135,7 @@ def callAPI(URL, API, PARAMS, CURRSSID,Version='',tolog='',returnRaw=False,force
         url_values = urllib.urlencode(PARAMS)
     API = Version+'/'+API+".php"
     callURL = URL+API+"?"+url_values
+    logging.debug ('######++++++++++++++++++ CALL URL  '+str(callURL))
     ### CREATE EMPTY VARIABLES
     ### EMPTY RESPONSE JUST IN CASE
     response = None
@@ -1498,8 +1560,14 @@ def getAllSystems(CURRSSID):
     ### CALLS API TO GET A LIST OF ALL THE SYSTEMS IN THE SITE
     logging.debug ('###### GETTING ALL SYSTEMS LIST')
     ### THIS IS THE API NAME
+    try:
+        params =dict(fixParams)
+        params['ssid']=config.ssid[CURRSSID]
+    except Exception as e:
+        logging.error ('###### CANNOT CREATE PARAMETERS '+str(e)+' '+str(ssid))
     API = "systemesListe"
-    response = callAPI(fixedURL, API, fixParams, CURRSSID,'2','Get All Systems')
+    logging.debug ('###### GOING TO CALL SYSTEMS API')
+    response = callAPI(fixedURL, API, params, CURRSSID,'2','Get All Systems',False,True)
     ### IF WE GET A RESPONSE THEN RETURN THE LIST
     if response != 'ERROR' and response is not None:
         try:
@@ -1580,9 +1648,10 @@ def insertHashInDB(myfile,hashType,hash):
     return success
 
 
-def md5(fname):
+def md5(fname,local=False):
     dbval =''
-    dbval = lookupHashInDB(fname,'MD5')
+    if not local:
+        dbval = lookupHashInDB(fname,'MD5')
     if dbval !='' and dbval != None:
         logging.debug('###### FOUND SOMETHING IN DB FOR '+fname+' SO RETURNING MD5='+str(dbval))
         return dbval.upper()
@@ -1596,15 +1665,17 @@ def md5(fname):
                 hash_md5.update(chunk)
         retval = hash_md5.hexdigest()
         logging.debug('###### CALCULATED MD5 FOR '+fname+' '+str(retval))
-        insertHashInDB(fname,'MD5',retval)
+        if not local:
+            insertHashInDB(fname,'MD5',retval)
         return retval.upper()
     except Exception as e:
         logging.error('###### COULD NOT CALCULATE MD5 ' + str(e))
         return ''
 
-def sha1(fname):
+def sha1(fname,local=False):
     dbval = ''
-    dbval = lookupHashInDB(fname,'SHA1')
+    if not local:
+        dbval = lookupHashInDB(fname,'SHA1')
     if dbval !='' and dbval != None:
         logging.debug ('###### FOUND SHA1 '+str(dbval)+' FOR FILE '+fname)
         return dbval.upper()
@@ -1621,15 +1692,17 @@ def sha1(fname):
                 buf = afile.read(BLOCKSIZE)
         retval = hasher.hexdigest()
         logging.debug ('###### SHA 1 '+str(retval)+' CALCULATED FOR FILE '+fname)
-        insertHashInDB(fname,'SHA1',retval)
+        if not local:
+            insertHashInDB(fname,'SHA1',retval)
         return retval.upper()
     except Exception as e:
         logging.error('###### COULD NOT CALCULATE SHA1 ' + str(e))
         return ''
 
-def crc(fileName):
+def crc(fileName,local=False):
     dbval=''
-    dbval = lookupHashInDB(fileName,'CRC')
+    if not local:
+        dbval = lookupHashInDB(fileName,'CRC')
     if dbval !='' and dbval != None:
         logging.debug ('###### FOUND CRC '+str(dbval)+' FOR FILE '+fileName)
         return dbval.upper()
@@ -1640,7 +1713,8 @@ def crc(fileName):
         for eachLine in open(fileName, "rb"):
             prev = zlib.crc32(eachLine, prev)
         retval = "%X" % (prev & 0xFFFFFFFF)
-        insertHashInDB(fileName,'CRC',retval)
+        if not local:
+            insertHashInDB(fileName,'CRC',retval)
         logging.debug ('###### CALUCLATED CRC '+str(retval)+' FOR FILE '+fileName)
         return retval.upper()
     except Exception as e:
@@ -1989,116 +2063,118 @@ def getRomFiles(path,acceptedExtens):
     return filelist
 
 def grabData(system, path, CURRSSID, acceptedExtens,gamesList,dozip):
-    ### WE'RE ABOUT TO PROCESS A SYSTEM
-    logging.debug ('###### GRAB DATA START')
-    ### CREATE ROOT ELEMENT FOR GAMELIST
-    tree = ET.ElementTree()
-    ### CREATE GAMELIST ELEMENT
-    gamelist = ET.Element('gameList')
-    filelist = getRomFiles(path, acceptedExtens)
-    ### ITERATE THROUGH EACH FILE
-    for file in filelist:
-        ### CREATE A PROCESS FILE VARIABLE SO WE KEEP THE INITIAL FILE VARIABLE QUIET
-        procfile = file
-        taillen = 30-int(len(procfile)/4)
-        logging.info ('-+'*taillen+'- START FILE ['+procfile+'] '+'-+'*taillen+'-')
-        ### INITIALIZE GAMEINFO, WE DO NOT WANT SOMETHING STRANGE HAPPENING
-        gameinfo = None
-        ### INITIALIZE THSIGAME ALSO
-        thisGame = None
-        ### SINCE FILE SEARCH WILL RETURN FILES AND DIRECTORIES
-        ### WE NEED TO CHECK WHAT WE ARE DEALING WITH
-        if os.path.isfile(procfile):
-            ### IT IS A FILE
-            logging.debug ('###### '+procfile+' IS A FILE')
-            ### PROCESS IT
-            procfile,gameinfo = goForFile(procfile,path,CURRSSID,acceptedExtens,system)
-        else:
-            ### IT IS A DIRECTORY
-            logging.debug ('###### '+procfile+' IS A DIRECTORY')
-            ### PROCESS IT
-            gameinfo = processDir(procfile,path,CURRSSID,acceptedExtens,system)
-        ### DID WE GET GAME INFORMATION?
-        if gameinfo is not None:
-            try:
-                gameinfo['localpath']=file
-                logging.debug ('###### LOCAL PATH '+gameinfo['localpath'])
-            except Exception as e:
-                ### THERE WAS AN ERROR CREATING GAME INSTANCE, NOTIFY
-                logging.error ('###### COULD NOT FIND LOCALPATH '+str(e))
-            try:
-                gameinfo['abspath']=path
-                logging.debug ('###### ABSOLUTE PATH  '+gameinfo['abspath'])
-            except Exception as e:
-                ### THERE WAS AN ERROR CREATING GAME INSTANCE, NOTIFY
-                logging.error ('###### COULD NOT FIND ABSPATH '+str(e))
-            try:
-                gameinfo['localhash']=sha1(path+'/'+file).upper()
-                logging.debug ('###### SHA1  '+gameinfo['localhash'])
-            except Exception as e:
-                ### THERE WAS AN ERROR CREATING GAME INSTANCE, NOTIFY
-                logging.error ('###### COULD NOT FIND SHA1 '+str(e))
-            try:
-                ### YES, CREATE A GAME INSTANCE THEN
-                thisGame = None
-                thisGame = Game(gameinfo,dozip)
-            except Exception as e:
-                logging.error ('###### COULD NOT CREATE GAME INSTANCE '+str(e))
-            logging.debug ('###### REMOVING GAME FROM MISSING LIST')
-            try:
-                removeid = int(gameinfo['jeu']['id'])
-                logging.debug('###### ID TO REMOVE '+str(removeid))
-                gamesList.remove(removeid)
-            except Exception as e:
-                logging.debug ('###### STRANGE, THIS ID WAS NOT IN THE LIST OF GAMES FOR THE SYSTEM, POSSIBLY MULTIDISC '+str(e))
-            if thisGame is not None:
-                ### YES WE DID, SO GET THE XML FOR THIS GAME
-                myGameXML = thisGame.getXML()
-                logging.debug('###### GAME XML '+str(myGameXML))
-                ### DID IT WORK?
-                if myGameXML is not None:
-                    ### YES, APPEND THE GAME TO THE GAMELIST
-                    gamelist.append(thisGame.getXML())
-                else:
-                    ### NO, NOTIFY ERROR
-                    logging.error('##### CANNOT GET XML FOR FILE '
-                                  + procfile + ' WITH SHA1 ' + sha1(procfile))
+    if not noparse:
+        ### WE'RE ABOUT TO PROCESS A SYSTEM
+        logging.debug ('###### GRAB DATA START')
+        ### CREATE ROOT ELEMENT FOR GAMELIST
+        tree = ET.ElementTree()
+        ### CREATE GAMELIST ELEMENT
+        gamelist = ET.Element('gameList')
+        filelist = getRomFiles(path, acceptedExtens)
+        ### ITERATE THROUGH EACH FILE
+        for file in filelist:
+            ### CREATE A PROCESS FILE VARIABLE SO WE KEEP THE INITIAL FILE VARIABLE QUIET
+            procfile = file
+            taillen = 30-int(len(procfile)/4)
+            logging.info ('-+'*taillen+'- START FILE ['+procfile+'] '+'-+'*taillen+'-')
+            ### INITIALIZE GAMEINFO, WE DO NOT WANT SOMETHING STRANGE HAPPENING
+            gameinfo = None
+            ### INITIALIZE THSIGAME ALSO
+            thisGame = None
+            ### SINCE FILE SEARCH WILL RETURN FILES AND DIRECTORIES
+            ### WE NEED TO CHECK WHAT WE ARE DEALING WITH
+            if os.path.isfile(procfile):
+                ### IT IS A FILE
+                logging.debug ('###### '+procfile+' IS A FILE')
+                ### PROCESS IT
+                procfile,gameinfo = goForFile(procfile,path,CURRSSID,acceptedExtens,system)
             else:
-                ### NO, SO JUST INFORM WE COULDN'T
+                ### IT IS A DIRECTORY
+                logging.debug ('###### '+procfile+' IS A DIRECTORY')
+                ### PROCESS IT
+                gameinfo = processDir(procfile,path,CURRSSID,acceptedExtens,system)
+            ### DID WE GET GAME INFORMATION?
+            if gameinfo is not None:
+                try:
+                    gameinfo['localpath']=file
+                    logging.debug ('###### LOCAL PATH '+gameinfo['localpath'])
+                except Exception as e:
+                    ### THERE WAS AN ERROR CREATING GAME INSTANCE, NOTIFY
+                    logging.error ('###### COULD NOT FIND LOCALPATH '+str(e))
+                try:
+                    gameinfo['abspath']=path
+                    logging.debug ('###### ABSOLUTE PATH  '+gameinfo['abspath'])
+                except Exception as e:
+                    ### THERE WAS AN ERROR CREATING GAME INSTANCE, NOTIFY
+                    logging.error ('###### COULD NOT FIND ABSPATH '+str(e))
+                try:
+                    gameinfo['localhash']=sha1(path+'/'+file).upper()
+                    logging.debug ('###### SHA1  '+gameinfo['localhash'])
+                except Exception as e:
+                    ### THERE WAS AN ERROR CREATING GAME INSTANCE, NOTIFY
+                    logging.error ('###### COULD NOT FIND SHA1 '+str(e))
+                try:
+                    ### YES, CREATE A GAME INSTANCE THEN
+                    thisGame = None
+                    thisGame = Game(gameinfo,dozip)
+                except Exception as e:
+                    logging.error ('###### COULD NOT CREATE GAME INSTANCE '+str(e))
+                logging.debug ('###### REMOVING GAME FROM MISSING LIST')
+                try:
+                    removeid = int(gameinfo['jeu']['id'])
+                    logging.debug('###### ID TO REMOVE '+str(removeid))
+                    gamesList.remove(removeid)
+                except Exception as e:
+                    logging.debug ('###### STRANGE, THIS ID WAS NOT IN THE LIST OF GAMES FOR THE SYSTEM, POSSIBLY MULTIDISC '+str(e))
+                if thisGame is not None:
+                    ### YES WE DID, SO GET THE XML FOR THIS GAME
+                    myGameXML = thisGame.getXML()
+                    logging.debug('###### GAME XML '+str(myGameXML))
+                    ### DID IT WORK?
+                    if myGameXML is not None:
+                        ### YES, APPEND THE GAME TO THE GAMELIST
+                        gamelist.append(thisGame.getXML())
+                    else:
+                        ### NO, NOTIFY ERROR
+                        logging.error('##### CANNOT GET XML FOR FILE '
+                                    + procfile + ' WITH SHA1 ' + sha1(procfile))
+                else:
+                    ### NO, SO JUST INFORM WE COULDN'T
+                    logging.info('##### COULD NOT SCRAPE ' + procfile + ' ')
+            else:
+                ### NO, INFORM WE HAD AN ISSUE
                 logging.info('##### COULD NOT SCRAPE ' + procfile + ' ')
-        else:
-            ### NO, INFORM WE HAD AN ISSUE
-            logging.info('##### COULD NOT SCRAPE ' + procfile + ' ')
-        ### GO TO NEXT USER ID
-        CURRSSID = CURRSSID + 1
-        if CURRSSID == len(config.ssid):
-            CURRSSID = 0
-        ### INFORM WE HAVE FINISHED PROCESSING FILE
-        logging.info ('-+'*taillen+'- END FILE ['+procfile+'] '+'-+'*taillen+'-')
-    ### WE HAVE PROCESSED ALL FILES, SO ADD GAMELIST TO THE ROOT ELEMENT OF THE XML
-    logging.debug ('###### TYPE '+str(type(gamelist))+' ---- '+str(gamelist))
-    for elmn in gamelist:
-        logging.debug (str(elmn))
-    tree._setroot(gamelist)
-    ### SET THE DESTINATION XML FILE
-    xmlFile = path + '/gamelist.xml'
-    ### IF THE FILE IS EXISTING, REMOVE IT
-    if os.path.isfile(xmlFile):
-        logging.debug ('###### REMOVING GAMELIST')
-        os.remove(xmlFile)
-    ### AND THEN CREATE IT
-    logging.debug ('###### GOING TO CREATE NEW GAMELIST')
-    try:
-        result = tree.write(xmlFile,encoding='utf-8', xml_declaration=True)
-    except Exception as e:
-        logging.error ('###### COULD NOT WRITE XML '+str(e))
-        result = False
-    logging.debug ('###### INTERNAL GAMELIST CREATED')
-    if result != None:
-        ### INFORM WE COULD NOT CREATE XML
-        logging.error ('##### ERROR WHEN CREATING XML '+str(result))
-    ### IN ORDER TO SAVE DISK SPACE, WE ARE GOING TO CLEAN UP VIDEOS AND DIRECTORIES, CHECK PROCEDURES TO UNDERSTAND WHAT HAPPENS
-    ### BUT BASICALLY WE CREATE LINKS WHEN FILES ARE THE SAME AND JUST KEEP ONE OF THEM
+            ### GO TO NEXT USER ID
+            CURRSSID = CURRSSID + 1
+            if CURRSSID == len(config.ssid):
+                CURRSSID = 0
+            ### INFORM WE HAVE FINISHED PROCESSING FILE
+            logging.info ('-+'*taillen+'- END FILE ['+procfile+'] '+'-+'*taillen+'-')
+        ### WE HAVE PROCESSED ALL FILES, SO ADD GAMELIST TO THE ROOT ELEMENT OF THE XML
+        logging.debug ('###### TYPE '+str(type(gamelist))+' ---- '+str(gamelist))
+        for elmn in gamelist:
+            logging.debug (str(elmn))
+        tree._setroot(gamelist)
+        ### SET THE DESTINATION XML FILE
+        xmlFile = path + '/gamelist.xml'
+        ### IF THE FILE IS EXISTING, REMOVE IT
+        if os.path.isfile(xmlFile):
+            logging.debug ('###### REMOVING GAMELIST')
+            os.remove(xmlFile)
+        ### AND THEN CREATE IT
+        logging.debug ('###### GOING TO CREATE NEW GAMELIST')
+        try:
+            result = tree.write(xmlFile,encoding='utf-8', xml_declaration=True)
+        except Exception as e:
+            logging.error ('###### COULD NOT WRITE XML '+str(e))
+            result = False
+        logging.debug ('###### INTERNAL GAMELIST CREATED')
+        if result != None:
+            ### INFORM WE COULD NOT CREATE XML
+            logging.error ('##### ERROR WHEN CREATING XML '+str(result))
+        ### IN ORDER TO SAVE DISK SPACE, WE ARE GOING TO CLEAN UP VIDEOS AND DIRECTORIES, CHECK PROCEDURES TO UNDERSTAND WHAT HAPPENS
+        ### BUT BASICALLY WE CREATE LINKS WHEN FILES ARE THE SAME AND JUST KEEP ONE OF THEM
+
     logging.info ('###### CLEANING VIDEOS ')
     cleanMedia(path + '/videos/','*.mp4')
     logging.info ('###### CLEANING IMAGES')
@@ -3341,6 +3417,7 @@ def insertGameDataInLocalDB(mygame,doupdate):
     return success
 
 def insertSystemInLocalDb(system):
+    logging.debug ('###### INSERTING SYSTEM '+str(system)+' IN LOCAL DB')
     sqlst = 'SELECT id FROM systems WHERE id = '+str(system['id'])
     result,success = queryDB(sqlst,(),False,mydb)
     logging.debug ('###### SQL RESULT FROM SYSTEMS EQUALS '+str(result))
@@ -3747,8 +3824,8 @@ def getGameFromAPI(gameid,ssid,doupdate):
         params =dict(fixParams)
         params['gameid'] = str(gameid)
         params['ssid']=config.ssid[ssid]
-    except:
-        logging.error ('###### CANNT CREATE PARAMETERS')
+    except Exception as e:
+        logging.error ('###### CANNOT CREATE PARAMETERS '+str(e)+' '+str(ssid))
     logging.debug('###### GOING TO CALL THE API FOR GAMEID '+str(gameid))
     response = callAPI(fixedURL,'jeuInfos',params,currssid,'2','UPDATE GAME INFO ',True,doupdate)
     shrtparams ='output=jsongameid='+str(gameid)
@@ -3757,7 +3834,7 @@ def getGameFromAPI(gameid,ssid,doupdate):
     logging.debug('###### '+str(response))
     if doupdate:
         logging.debug ('###### GOING TO UPDATE GAME IN DB (APICACHE)')
-        updateInDBV2Call('jeuInfos.php',shrtparams,response)    
+        updateInDBV2Call('JEUINFOS.PHP',shrtparams,response)    
     logging.debug ('###### CHECKING IF jeu IS IN RESPONSE')
     if response.find('jeu'):
         logging.debug ('###### GOING TO UPDATE GAME IN DB (NORMALIZED)')
@@ -3770,7 +3847,7 @@ def getGameFromAPI(gameid,ssid,doupdate):
             return response
         if not success:
             logging.debug ('###### I COULD NOT INSERT GAME INTO DB BECAUSE IT DID NOT HAS ASSOCIATED ROMS')
-            updateInDBV2Call('jeuInfos.php',shrtparams,'NOT FOUND')
+            updateInDBV2Call('JEUINFOS.PHP',shrtparams,'NOT FOUND')
             response =''    
     logging.debug ("###### RETURNING RESPONSE")
     return response
@@ -3785,10 +3862,12 @@ def locateGamesInPage(pagehtml,ssid):
             for gid in gidsrch:
                 gameid = gid.group(1)
                 logging.debug('###### GAME ID IS '+str(gameid))
-                logging.info('###### GETTING GAME '+str(gameid)+' INFORMATION VIA API')
                 if gameid not in procgames:
+                    logging.info('###### GETTING GAME '+str(gameid)+' INFORMATION VIA API')
                     getGameFromAPI(gameid,ssid,True)
                     procgames.append(gameid)
+                else:
+                    logging.debug('###### GAME ID '+str(gameid)+' HAS ALREADY BEEN DONE')
         else:
             logging.error ('###### DID NOT FIND ANY MEDIA UPDATES IN PAGE ....')
     except Exception as e:
@@ -3882,7 +3961,7 @@ def getNewMedias(id,ssid):
 def getNewInfos(id,ssid):
     for pageid in range (0,int(id)):
         logging.info ('###### GETTING PAGE '+str(pageid))
-        getInfosPage(pageid,ssid)
+        doneIds = getInfosPage(pageid,ssid)
     return
 
 
@@ -3973,6 +4052,31 @@ if findsynops:
     sys.exit()
 
 
+if fromFile:
+    currssid = 0
+    maxssid = len(config.ssid)
+    cnt = 0
+    ### Import Ids from CSV FILE    
+    with open(csvFile) as csv_file:
+        csv_reader = csv.reader(csv_file, delimiter=';')
+        for row in csv_reader:
+            try:
+                gameid = int(row[0])
+                updateGameFromAPI(gameid,currssid)
+                if cnt == 50:
+                    mydb.commit()
+                    cnt = 0
+                else:
+                    cnt = cnt + 1
+                logging.info ('###### DONE GAME '+str(gameid))
+                response = 'QUOTA'
+                currssid = currssid + 1
+                if currssid >= maxssid:
+                    currssid = 0
+            except Exception as e:
+                logging.debug('EXCEPTION '+str(e))
+    logging.info ('###### DONE IMPORT FROM FILE '+csvFile)
+    sys.exit(0)
 
 if migrateDB:
     logging.debug ('###### GOING TO IMPORT GAMES INTO DB')

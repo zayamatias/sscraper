@@ -101,6 +101,8 @@ CREATE TABLE `gameDates` (
   CONSTRAINT `gameDates_FK` FOREIGN KEY (`gameID`) REFERENCES `games` (`id`) ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB AUTO_INCREMENT=1
 
+-- romhashes.gameMedias definition
+
 CREATE TABLE `gameMedias` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
   `type` varchar(20) DEFAULT NULL,
@@ -108,11 +110,12 @@ CREATE TABLE `gameMedias` (
   `region` varchar(40) DEFAULT NULL,
   `format` varchar(5) DEFAULT NULL,
   `gameid` int(11) DEFAULT NULL,
+  `cnt` tinyint(4) NOT NULL,
   PRIMARY KEY (`id`),
-  UNIQUE KEY `gameMedias_UN` (`type`,`region`,`gameid`),
+  UNIQUE KEY `gameMedias_UN` (`type`,`region`,`format`,`gameid`,`cnt`),
   KEY `gameMedias_FK` (`gameid`),
-  CONSTRAINT `gameMedias_FK` FOREIGN KEY (`gameid`) REFERENCES `games` (`id`) ON DELETE CASCADE ON UPDATE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4;
+  CONSTRAINT `gameMedias_FK` FOREIGN KEY (`gameid`) REFERENCES `games` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB AUTO_INCREMENT=2184517 DEFAULT CHARSET=utf8mb4;
 
 -- romhashes.gameNames definition
 

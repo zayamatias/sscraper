@@ -46,21 +46,18 @@ CREATE TABLE `systems` (
 
 CREATE TABLE `games` (
   `id` int(11) NOT NULL,
-  `notgame` tinyint(1) DEFAULT NULL,
-  `topstaff` int(11) DEFAULT NULL,
-  `rotation` int(11) DEFAULT NULL,
-  `cloneof` int(11) DEFAULT NULL,
+  `notgame` varchar(10) DEFAULT NULL,
+  `topstaff` varchar(10) DEFAULT NULL,
+  `rotation` varchar(10) DEFAULT NULL,
+  `cloneof` varchar(10) DEFAULT NULL,
   `system` int(11) DEFAULT NULL,
   `editeur` int(11) DEFAULT NULL,
   `lastdate` datetime DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+  `joueurs` varchar(10) DEFAULT NULL,
   PRIMARY KEY (`id`),
   KEY `editor_FK` (`editeur`),
-  KEY `system_FK` (`system`),
-  CONSTRAINT `editor_FK` FOREIGN KEY (`editeur`) REFERENCES `editors` (`id`) ON DELETE CASCADE ON UPDATE CASCADE,
-  CONSTRAINT `system_FK` FOREIGN KEY (`system`) REFERENCES `systems` (`id`) ON DELETE CASCADE ON UPDATE CASCADE
+  KEY `system_FK` (`system`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Holds the basic information of the games';
-
--- romhashes.gameRoms definition
 
 -- romhashes.gameRoms definition
 

@@ -62,6 +62,8 @@ CREATE TABLE `games` (
 
 -- romhashes.gameRoms definition
 
+-- romhashes.gameRoms definition
+
 CREATE TABLE `gameRoms` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
   `romfilename` varchar(300) NOT NULL,
@@ -80,11 +82,17 @@ CREATE TABLE `gameRoms` (
   `rommd5` varchar(32) DEFAULT NULL,
   `systemid` int(11) DEFAULT NULL,
   PRIMARY KEY (`id`),
-  UNIQUE KEY `gameRoms_UN` (`rommd5`,`romcrc`,`romsha1`),
+  UNIQUE KEY `gameRoms_UN` (`romsha1`,`romcrc`,`rommd5`),
   KEY `gameRoms_romsha1_IDX` (`romsha1`) USING BTREE,
-  KEY `gameRoms_romcrc_IDX` (`romcrc`) USING BTREE,
   KEY `gameRoms_rommd5_IDX` (`rommd5`) USING BTREE,
-) ENGINE=InnoDB AUTO_INCREMENT=1152471 DEFAULT CHARSET=utf8mb4;
+  KEY `gameRoms_romfilename_IDX` (`romfilename`) USING BTREE,
+  KEY `gameRoms_FK` (`gameid`),
+  KEY `gameRoms_FK_1` (`systemid`),
+  KEY `gameRoms_romcrc_IDX` (`romcrc`) USING BTREE,
+  CONSTRAINT `gameRoms_FK` FOREIGN KEY (`gameid`) REFERENCES `games` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `gameRoms_FK_1` FOREIGN KEY (`systemid`) REFERENCES `systems` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4;
+
 
 CREATE TABLE `gameDates` (
   `id` int(11) NOT NULL AUTO_INCREMENT,

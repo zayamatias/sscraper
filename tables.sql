@@ -1,7 +1,8 @@
 CREATE DATABASE `romhashes` /*!40100 DEFAULT CHARACTER SET utf8mb4 */;
 
-USE `romhashes`
+USE `romhashes`;
 
+-- Start Creation
 CREATE TABLE `filehashes` (
   `file` varchar(300) NOT NULL,
   `SHA1` varchar(100) DEFAULT NULL,
@@ -9,8 +10,9 @@ CREATE TABLE `filehashes` (
   `CRC` varchar(100) DEFAULT NULL,
   PRIMARY KEY (`file`),
   KEY `filehashes_file_IDX` (`file`) USING BTREE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- apicache
 
 CREATE TABLE `apicache` (
   `apiname` varchar(100) NOT NULL,
@@ -19,6 +21,10 @@ CREATE TABLE `apicache` (
   KEY `apicache_apiname_IDX` (`apiname`,`parameters`) USING BTREE,
   KEY `apicache_parameters_IDX` (`parameters`) USING BTREE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Holds a cache of V2 API CALLS';
+
+
+-- editors
+
 
 CREATE TABLE `editors` (
   `id` int(11) NOT NULL,
@@ -99,7 +105,7 @@ CREATE TABLE `gameDates` (
   PRIMARY KEY (`id`),
   UNIQUE KEY `gameDates_UN` (`gameID`,`region`),
   CONSTRAINT `gameDates_FK` FOREIGN KEY (`gameID`) REFERENCES `games` (`id`) ON DELETE CASCADE ON UPDATE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=1
+) ENGINE=InnoDB AUTO_INCREMENT=1;
 
 -- romhashes.gameMedias definition
 

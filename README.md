@@ -5,7 +5,8 @@ I need your help!
 
 If you:
 
-  - Have a system running emulation station under linux
+  - Have a system running emulation station underlinux
+  - Have a linux machine with a desktop environment (such as ubuntu) [Windows help will be needed later on]
   - Know your way around configuration files (In JSON)
   - Know your way around python
   - Are willing to cope with a lot of issues during testing

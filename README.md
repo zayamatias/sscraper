@@ -1,3 +1,20 @@
+# Important news!
+I've been working on a new scraper for a while now, and it is starting to get to a very basic point, but to a point where it could be start to be tested very soon.
+
+I need your help!
+
+If you:
+
+  - Have a system running emulation station under linux
+  - Know your way around configuration files (In JSON)
+  - Know your way around python
+  - Are willing to cope with a lot of issues during testing
+  - Are interested in helping me
+
+Write me a message here and I'll get in touch ASAP.
+
+Thanks!
+
 # sscraper
 
 Python tool to scrape from screenscraper.fr - This is not a GUI tool, it must be run on the command line, preferably on the machine where your roms are hosted.

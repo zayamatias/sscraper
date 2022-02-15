@@ -12,7 +12,7 @@ If you:
   - Are willing to cope with a lot of issues during testing
   - Are interested in helping me
 
-If you're interested, send me an email to retroscraper(at)gmail.com and I'll get in touch ASAP.
+Try it by downloading from [here](http://77.68.23.83/download.html) If you're interested, send me an email to retroscraper(at)gmail.com and I'll get in touch ASAP.
 
 Thanks!
 

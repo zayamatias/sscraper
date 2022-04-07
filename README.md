@@ -1,20 +1,7 @@
 # Important news!
-I've been working on a new scraper for a while now, and it is starting to get to a very basic point, but to a point where it could start to be tested rather soon.
+I've been working on a new scraper for a while now, you can find it [here](https://github.com/zayamatias/retroscraper)
 
-I need your help!
-
-If you:
-
-  - Have a system running emulation station underlinux
-  - Have a linux machine with a desktop environment (such as ubuntu) [Windows help will be needed later on]
-  - Know your way around configuration files (In JSON)
-  - Know your way around python
-  - Are willing to cope with a lot of issues during testing
-  - Are interested in helping me
-
-Try it by downloading from [here](http://77.68.23.83/download.html) If you're interested, send me an email to retroscraper(at)gmail.com and I'll get in touch ASAP.
-
-Thanks!
+Development for this sscraper has been stopped for now.
 
 # sscraper
 
